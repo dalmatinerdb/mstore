@@ -17,6 +17,7 @@ distclean: clean
 	$(REBAR) delete-deps
 
 test: all
+	-rm -r .eunit
 	$(REBAR) skip_deps=true eunit
 
 ###

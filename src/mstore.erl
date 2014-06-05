@@ -17,13 +17,18 @@
 -record(mset, {size, chash, dir, seed}).
 -define(DATA_SIZE, 8).
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, close/1, open/1, open/3, write/4, read/4, avg/3,
+-export([put/4, get/4, new/3, close/1, open/1, open/3, avg/3,
          sum/3, max/3, min/3, to_list/1]).
+
+
+%% @doc Opens an existing mstore.
+
+-spec open(Dir :: string()) -> {ok, #mset{}} | {error, not_found}.
 
 open(Dir) ->
     case file:consult(Dir++"/mstore") of
         {ok, [{FileSize, NumFiles, Seed}]} ->
-            #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed};
+            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed}};
         _ ->
             {error, not_found}
     end.
@@ -35,7 +40,7 @@ new(NumFiles, FileSize, Dir) ->
     case file:consult(Dir++"/mstore") of
         {ok, [{F, N, Seed}]} when F =:= FileSize,
                                   N =:= NumFiles ->
-            #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed};
+            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed}};
         {ok, _} ->
             {error, index_missmatch};
         _ ->
@@ -45,7 +50,7 @@ new(NumFiles, FileSize, Dir) ->
                             io_lib:format("~p.", [{FileSize, NumFiles, Seed}])),
             CHash = {_, Idxs} = chash:fresh(NumFiles, []),
             [file:make_dir([Dir, $/, integer_to_list(I)]) || {I, _} <- Idxs],
-            #mset{size=FileSize, chash=CHash, dir=Dir, seed=Seed}
+            {ok, #mset{size=FileSize, chash=CHash, dir=Dir, seed=Seed}}
     end.
 
 put(MSet = #mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Value) ->
@@ -59,17 +64,28 @@ put(MSet = #mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Value) ->
             {ok, F1} = write(F, Metric, Time, Value),
             CHash1 = chash:update(Idx, [{FileBase, F1}], CHash),
             MSet#mset{chash = CHash1};
-        [{FileBase, F}] ->
+        [{FileBase, F} | R] ->
             {ok, F1} = write(F, Metric, Time, Value),
-            CHash1 = chash:update(Idx, [{FileBase, F1}], CHash),
+            CHash1 = chash:update(Idx, [{FileBase, F1}| R], CHash),
             MSet#mset{chash = CHash1};
-        [{_Other, F}] ->
+        [First, {FileBase, F}] ->
+            {ok, F1} = write(F, Metric, Time, Value),
+            CHash1 = chash:update(Idx, [{FileBase, F1}, First], CHash),
+            MSet#mset{chash = CHash1};
+        [First] ->
+            Base = [D, $/, integer_to_list(Idx), $/, integer_to_list(FileBase)],
+            {ok, F1} = open(Base, FileBase, S),
+            {ok, F2} = write(F1, Metric, Time, Value),
+            CHash1 = chash:update(Idx, [{FileBase, F2}, First], CHash),
+            MSet#mset{chash = CHash1};
+        [First, {_Other, F}] ->
             close(F),
             Base = [D, $/, integer_to_list(Idx), $/, integer_to_list(FileBase)],
             {ok, F1} = open(Base, FileBase, S),
             {ok, F2} = write(F1, Metric, Time, Value),
-            CHash1 = chash:update(Idx, [{FileBase, F2}], CHash),
+            CHash1 = chash:update(Idx, [{FileBase, F2}, First], CHash),
             MSet#mset{chash = CHash1}
+
     end.
 
 get(#mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Count) ->
@@ -269,13 +285,13 @@ make_splits_test() ->
     ?assertEqual([{1401895990, 10}, {1401896000, 10}], R2).
 
 
-bench_test_() ->
-    NumMetrics = 1000,
+bench_test() ->
+    NumMetrics = 100,
     Dir = "bench",
-    T0 = 600,
-    NumPoints = 1000,
+    T0 = 450,
+    NumPoints = 2500,
     file:make_dir(Dir),
-    S = mstore:new(20, 1000, Dir),
+    {ok, S} = mstore:new(20, 200, Dir),
     Metrics = [list_to_binary(io_lib:format("metric~p", [I])) || I <- lists:seq(0, NumMetrics)],
     {T, S1} = timer:tc(fun () ->
                                add_points(S, Metrics, T0, NumPoints)
@@ -285,13 +301,26 @@ bench_test_() ->
     ?debugFmt("Inserted ~p metrics in ~p seconds meaning ~p metrics/second.",
               [TotalInserts, Seconds, TotalInserts/Seconds]),
     [M0|_] = Metrics,
-    {ok, R} = get(S1, M0, 610, 10),
-    L = to_list(R),
-    {timeout, 15,
-     ?_assertEqual(lists:reverse(lists:seq(NumPoints-19, NumPoints-10)), L)}.
+    {T1, {ok, R}} = timer:tc(fun() ->
+                                     get(S1, M0, T0, NumPoints)
+                             end),
+    Seconds1 = T1 / 1000000,
+    ?debugFmt("Read ~p metrics in ~p seconds meaning ~p metrics/second.",
+              [NumPoints, Seconds1, NumPoints/Seconds1]),
+    {T2, L} = timer:tc(fun() ->
+                               to_list(R)
+                       end),
+    Seconds2 = T2 / 1000000,
+    ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",
+              [NumPoints, Seconds2, NumPoints/Seconds2]),
+    ?assertEqual(lists:reverse(lists:seq(1, NumPoints)), L).
 
-add_points(S, _, _, 0) ->
-    S;
+add_points(S, Metrics, T, 0) ->
+    S1 = lists:foldl(fun(M, SAcc) ->
+                             put(SAcc, M, T, [0])
+                     end, S, Metrics),
+    S1;
+
 add_points(S, Metrics, T, Ps) ->
     S1 = lists:foldl(fun(M, SAcc) ->
                              put(SAcc, M, T, [Ps])
