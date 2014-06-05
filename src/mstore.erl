@@ -284,36 +284,38 @@ make_splits_test() ->
     R2 = make_splits(T2, C2, S2, []),
     ?assertEqual([{1401895990, 10}, {1401896000, 10}], R2).
 
-
-bench_test() ->
-    NumMetrics = 100,
-    Dir = "bench",
-    T0 = 450,
-    NumPoints = 2500,
-    file:make_dir(Dir),
-    {ok, S} = mstore:new(20, 200, Dir),
-    Metrics = [list_to_binary(io_lib:format("metric~p", [I])) || I <- lists:seq(0, NumMetrics)],
-    {T, S1} = timer:tc(fun () ->
-                               add_points(S, Metrics, T0, NumPoints)
-                       end),
-    Seconds = T / 1000000,
-    TotalInserts = NumMetrics*NumPoints,
-    ?debugFmt("Inserted ~p metrics in ~p seconds meaning ~p metrics/second.",
-              [TotalInserts, Seconds, TotalInserts/Seconds]),
-    [M0|_] = Metrics,
-    {T1, {ok, R}} = timer:tc(fun() ->
-                                     get(S1, M0, T0, NumPoints)
-                             end),
-    Seconds1 = T1 / 1000000,
-    ?debugFmt("Read ~p metrics in ~p seconds meaning ~p metrics/second.",
-              [NumPoints, Seconds1, NumPoints/Seconds1]),
-    {T2, L} = timer:tc(fun() ->
-                               to_list(R)
-                       end),
-    Seconds2 = T2 / 1000000,
-    ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",
-              [NumPoints, Seconds2, NumPoints/Seconds2]),
-    ?assertEqual(lists:reverse(lists:seq(1, NumPoints)), L).
+bench_test_() ->
+    {timeout, 60,
+     fun() ->
+             NumMetrics = 100,
+             Dir = "bench",
+             T0 = 450,
+             NumPoints = 2500,
+             file:make_dir(Dir),
+             {ok, S} = mstore:new(20, 200, Dir),
+             Metrics = [list_to_binary(io_lib:format("metric~p", [I])) || I <- lists:seq(0, NumMetrics)],
+             {T, S1} = timer:tc(fun () ->
+                                        add_points(S, Metrics, T0, NumPoints)
+                                end),
+             Seconds = T / 1000000,
+             TotalInserts = NumMetrics*NumPoints,
+             ?debugFmt("Inserted ~p metrics in ~p seconds meaning ~p metrics/second.",
+                       [TotalInserts, Seconds, TotalInserts/Seconds]),
+             [M0|_] = Metrics,
+             {T1, {ok, R}} = timer:tc(fun() ->
+                                              get(S1, M0, T0, NumPoints)
+                                      end),
+             Seconds1 = T1 / 1000000,
+             ?debugFmt("Read ~p metrics in ~p seconds meaning ~p metrics/second.",
+                       [NumPoints, Seconds1, NumPoints/Seconds1]),
+             {T2, L} = timer:tc(fun() ->
+                                        to_list(R)
+                                end),
+             Seconds2 = T2 / 1000000,
+             ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",
+                       [NumPoints, Seconds2, NumPoints/Seconds2]),
+             ?assertEqual(lists:reverse(lists:seq(1, NumPoints)), L)
+     end}.
 
 add_points(S, Metrics, T, 0) ->
     S1 = lists:foldl(fun(M, SAcc) ->
@@ -326,6 +328,5 @@ add_points(S, Metrics, T, Ps) ->
                              put(SAcc, M, T, [Ps])
                      end, S, Metrics),
     add_points(S1, Metrics, T+1, Ps-1).
-
 
 -endif.
