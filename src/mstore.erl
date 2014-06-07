@@ -95,7 +95,7 @@ do_put(MSet = #mset{size=S}, Metric,
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     {ok, F1} = write(F, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F1} | First]);
+    do_put(MSet, Metric, R, DataRest, [{FileBase, F1}, First]);
 
 do_put(MSet = #mset{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
@@ -106,12 +106,11 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     Base = [D, $/, integer_to_list(FileBase)],
     {ok, F1} = open(Base, FileBase, S),
     {ok, F2} = write(F1, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F2} | First]);
+    do_put(MSet, Metric, R, DataRest, [{FileBase, F2}, First]);
 
 do_put(MSet = #mset{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
-       Files) ->
-    %%io:format("<<Data:~p/binary, DataRest/binary>> = ~p~n", [Size, InData]),
+       Files) when length(Files) < 2 ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     Base = [D, $/, integer_to_list(FileBase)],
@@ -121,7 +120,6 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
 
 get(#mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Count) ->
     Parts = make_splits(Time, Count, S, []),
-    io:format("~p~n", [Parts]),
     <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
     Idx = chash:next_index(IndexAsInt, CHash),
     Dir = [D, "/", integer_to_list(Idx)],
@@ -322,16 +320,17 @@ bench_test_() ->
              Dir = "bench",
              T0 = 450,
              NumPoints = 2500,
+             Size = 10,
              file:make_dir(Dir),
              {ok, S} = mstore:new(20, 200, Dir),
              Metrics = [list_to_binary(io_lib:format("metric~p", [I])) || I <- lists:seq(0, NumMetrics)],
              {T, S1} = timer:tc(fun () ->
-                                        add_points(S, Metrics, T0, NumPoints)
+                                        add_points(S, Metrics, Size, T0, NumPoints)
                                 end),
              Seconds = T / 1000000,
-             TotalInserts = NumMetrics*NumPoints,
-             ?debugFmt("Inserted ~p metrics in ~p seconds meaning ~p metrics/second.",
-                       [TotalInserts, Seconds, TotalInserts/Seconds]),
+             TotalInserts = NumMetrics*NumPoints*Size,
+             ?debugFmt("Inserted ~p metrics in batches of ~p, this took ~p seconds meaning ~p metrics/second.",
+                       [TotalInserts, Size, Seconds, TotalInserts/Seconds]),
              [M0|_] = Metrics,
              {T1, {ok, R}} = timer:tc(fun() ->
                                               get(S1, M0, T0, NumPoints)
@@ -345,19 +344,22 @@ bench_test_() ->
              Seconds2 = T2 / 1000000,
              ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",
                        [NumPoints, Seconds2, NumPoints/Seconds2]),
-             ?assertEqual(lists:reverse(lists:seq(1, NumPoints)), L)
+             Expected = lists:reverse(lists:seq(NumPoints*9+1, NumPoints*10)),
+             ?assertEqual(length(Expected), length(L)),
+             ?assertEqual(Expected, L)
      end}.
 
-add_points(S, Metrics, T, 0) ->
+add_points(S, Metrics, _Size, T, 0) ->
     S1 = lists:foldl(fun(M, SAcc) ->
                              put(SAcc, M, T, [0])
                      end, S, Metrics),
     S1;
 
-add_points(S, Metrics, T, Ps) ->
+add_points(S, Metrics, Size, T, Ps) ->
+    Data = lists:reverse(lists:seq((Ps-1)*Size, Ps*Size)),
     S1 = lists:foldl(fun(M, SAcc) ->
-                             put(SAcc, M, T, [Ps])
+                             put(SAcc, M, T, Data)
                      end, S, Metrics),
-    add_points(S1, Metrics, T+1, Ps-1).
+    add_points(S1, Metrics, Size, T+Size, Ps-1).
 
 -endif.
