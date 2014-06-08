@@ -28,7 +28,8 @@
 open(Dir) ->
     case file:consult([Dir | "/mstore"]) of
         {ok, [{FileSize, NumFiles, Seed, Metrics}]} ->
-            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed, metrics=gb_sets:from_list(Metrics)}};
+            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir,
+                       seed=Seed, metrics=gb_sets:from_list(Metrics)}};
         _ ->
             {error, not_found}
     end.
@@ -38,9 +39,10 @@ new(NumFiles, FileSize, Dir) when is_binary(Dir) ->
 
 new(NumFiles, FileSize, Dir) ->
     case file:consult([Dir | "/mstore"]) of
-        {ok, [{F, N, Seed}]} when F =:= FileSize,
-                                  N =:= NumFiles ->
-            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir, seed=Seed}};
+        {ok, [{F, N, Seed, Metrics}]} when F =:= FileSize,
+                                           N =:= NumFiles ->
+            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir,
+                       seed=Seed, metrics=gb_sets:from_list(Metrics)}};
         {ok, _} ->
             {error, index_missmatch};
         _ ->
@@ -55,7 +57,8 @@ new(NumFiles, FileSize, Dir) ->
 save_set(#mset{dir=D, size=Size, chash=CHash, seed=Seed,metrics=Metrics}) ->
     NumFiles = chash:size(CHash),
     file:write_file([D | "/mstore"],
-                    io_lib:format("~p.", [{Size, NumFiles, Seed, gb_sets:to_list(Metrics)}])).
+                    io_lib:format("~p.", [{Size, NumFiles, Seed,
+                                           gb_sets:to_list(Metrics)}])).
 
 
 metrics(#mset{metrics=M}) ->
