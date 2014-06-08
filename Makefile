@@ -19,6 +19,9 @@ distclean: clean
 test: all
 	-rm -r .eunit
 	$(REBAR) skip_deps=true eunit
+bench: all
+	-rm -r .eunit
+	$(REBAR) -D BENCH skip_deps=true eunit
 
 ###
 ### Docs
