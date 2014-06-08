@@ -8,17 +8,17 @@
 %%%-------------------------------------------------------------------
 -module(mstore).
 
+-include("mstore.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
-
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
--define(DATA_SIZE, 8).
+
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, close/1, open/1, open/3, avg/3,
-         sum/3, max/3, min/3, to_list/1, metrics/1]).
+-export([put/4, get/4, new/3, close/1, open/1, open/3, to_list/1, metrics/1]).
 
 
 %% @doc Opens an existing mstore.
@@ -64,9 +64,13 @@ save_set(#mset{dir=D, size=Size, chash=CHash, seed=Seed,metrics=Metrics}) ->
 metrics(#mset{metrics=M}) ->
     gb_sets:to_list(M).
 
-put(MSet, Metric, Time, Values)
-  when is_list(Values) ->
-    put(MSet, Metric, Time, << <<V:64/integer>> || V <- Values >>);
+put(MSet, Metric, Time, [V0 | _] = Values)
+  when is_integer(V0) ->
+    put(MSet, Metric, Time, << <<?INT, V:?BITS/integer>> || V <- Values >>);
+
+put(MSet, Metric, Time, [V0 | _] = Values)
+  when is_float(V0) ->
+    put(MSet, Metric, Time, << <<?FLOAT, V:?BITS/float>> || V <- Values >>);
 
 put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
     Metric, Time, Value)
@@ -95,8 +99,11 @@ put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
     end;
 
 
-put(MSet, Metric, Time, V) ->
-    put(MSet, Metric, Time, <<V:64/integer>>).
+put(MSet, Metric, Time, V) when is_integer(V) ->
+    put(MSet, Metric, Time, <<?INT, V:?BITS/integer>>);
+
+put(MSet, Metric, Time, V) when is_float(V) ->
+    put(MSet, Metric, Time, <<?FLOAT, V:?BITS/float>>).
 
 do_put(_, _, [], <<>>, Files) ->
     Files;
@@ -217,10 +224,17 @@ write(M=#mstore{offset=Offset, size=S}, Metric, Position, Value)
        (Position - Offset) + (byte_size(Value)/?DATA_SIZE) =< S ->
     do_write(M, Metric, Position, Value);
 
-write(M=#mstore{offset=Offset, size=S}, Metric, Position, Values)
+write(M=#mstore{offset=Offset, size=S}, Metric, Position, [V0 | _] = Values)
   when Position >= Offset,
-       (Position - Offset) + length(Values) =< S ->
-    do_write(M, Metric, Position, << <<V:64/integer>> || V <- Values >>);
+       (Position - Offset) + length(Values) =< S,
+       is_integer(V0) ->
+    do_write(M, Metric, Position, << <<?INT, V:?BITS/integer>> || V <- Values >>);
+
+write(M=#mstore{offset=Offset, size=S}, Metric, Position, [V0 | _] = Values)
+  when Position >= Offset,
+       (Position - Offset) + length(Values) =< S,
+       is_float(V0) ->
+    do_write(M, Metric, Position, << <<?FLOAT, V:?BITS/float>> || V <- Values >>);
 
 write(#mstore{offset=O, size=S}, _, P, _) ->
     io:format("Out of scope: Offset:~p Size:~p Position:~p~n.", [O, S, P]),
@@ -256,65 +270,11 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
 read(_,_,_,_) ->
     {error, out_of_scope}.
 
+to_list(<<?INT, _/binary>> = Bin) ->
+    [I || <<?INT, I:?BITS/integer>> <= Bin];
 
-avg(File, Offset, Count) ->
-    case file:pread(File, Offset*?DATA_SIZE, Count*8) of
-        {ok, Data} ->
-            calc_sum(Data, 0) / Count;
-        E ->
-            E
-    end.
-
-sum(File, Offset, Count) ->
-    case file:pread(File, Offset*8, Count*8) of
-        {ok, Data} ->
-            calc_sum(Data, 0);
-        E ->
-            E
-    end.
-
-max(File, Offset, Count) ->
-    case file:pread(File, Offset*8, Count*8) of
-        {ok, <<I:64/integer, Data/binary>>} ->
-            calc_max(Data, I);
-        E ->
-            E
-    end.
-
-min(File, Offset, Count) ->
-    case file:pread(File, Offset*8, Count*8) of
-        {ok, <<I:64/integer, Data/binary>>} ->
-            calc_min(Data, I);
-        E ->
-            E
-    end.
-
-calc_sum(<<I:64/integer, R/binary>>, Sum) ->
-    calc_sum(R, Sum + I);
-
-calc_sum(<<>>, Sum) ->
-    Sum.
-
-calc_min(<<I:64/integer, R/binary>>, Min) when I < Min->
-    calc_min(R, I);
-
-calc_min(<<_:64/integer, R/binary>>, Min) ->
-    calc_min(R, Min);
-
-calc_min(<<>>, Min) ->
-    Min.
-
-calc_max(<<I:64/integer, R/binary>>, Min) when I > Min->
-    calc_max(R, I);
-
-calc_max(<<_:64/integer, R/binary>>, Min) ->
-    calc_max(R, Min);
-
-calc_max(<<>>, Min) ->
-    Min.
-
-to_list(Bin) ->
-    [I || <<I:64/integer>> <= Bin].
+to_list(<<?FLOAT, _/binary>> = Bin) ->
+    [I || <<?FLOAT, I:?BITS/float>> <= Bin].
 
 write_index(#mstore{name=F, index=I, offset=O, size=S}) ->
     file:write_file([F | ".idx"], io_lib:format("~p.", [{O, S, gb_trees:to_list(I)}])).
@@ -333,6 +293,7 @@ make_splits_test() ->
     R2 = make_splits(T2, C2, S2, []),
     ?assertEqual([{1401895990, 10}, {1401896000, 10}], R2).
 
+-ifdef(BENCH).
 bench_test_() ->
     {timeout, 60,
      fun() ->
@@ -381,5 +342,6 @@ add_points(S, Metrics, Size, T, Ps) ->
                              put(SAcc, M, T, Data)
                      end, S, Metrics),
     add_points(S1, Metrics, Size, T+Size, Ps-1).
+-endif.
 
 -endif.
