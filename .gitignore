@@ -2,3 +2,4 @@
 .eunit
 ebin
 data
+deps

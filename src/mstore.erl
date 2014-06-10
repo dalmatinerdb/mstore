@@ -18,7 +18,7 @@
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
 
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, close/1, open/1, open/3, to_list/1, metrics/1]).
+-export([put/4, get/4, new/3, close/1, open/1, open/3, metrics/1]).
 
 
 %% @doc Opens an existing mstore.
@@ -270,11 +270,6 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
 read(_,_,_,_) ->
     {error, out_of_scope}.
 
-to_list(<<?INT, _/binary>> = Bin) ->
-    [I || <<?INT, I:?BITS/integer>> <= Bin];
-
-to_list(<<?FLOAT, _/binary>> = Bin) ->
-    [I || <<?FLOAT, I:?BITS/float>> <= Bin].
 
 write_index(#mstore{name=F, index=I, offset=O, size=S}) ->
     file:write_file([F | ".idx"], io_lib:format("~p.", [{O, S, gb_trees:to_list(I)}])).
@@ -320,7 +315,7 @@ bench_test_() ->
              ?debugFmt("Read ~p metrics in ~p seconds meaning ~p metrics/second.",
                        [NumPoints, Seconds1, NumPoints/Seconds1]),
              {T2, L} = timer:tc(fun() ->
-                                        to_list(R)
+                                        mstore_bin:to_list(R)
                                 end),
              Seconds2 = T2 / 1000000,
              ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",
