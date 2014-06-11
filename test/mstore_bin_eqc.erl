@@ -5,7 +5,7 @@
 -include("../include/mstore.hrl").
 
 -import(mstore_heler, [int_array/0, float_array/0, non_neg_int/0, pos_int/0,
-                       i_or_f_list/0, i_or_f_array/0, non_empty_i_or_f_array/0]).
+                       i_or_f_list/0, i_or_f_array/0, out/1]).
 
 -compile(export_all).
 
@@ -34,10 +34,6 @@ b2l_prop() ->
 find_type_prop() ->
     ?FORALL({T, B}, non_obvious_list(),
             T == mstore_bin:find_type(B)).
-
-
-out(P) ->
-   on_output(fun(S,F) -> io:format(user, S, F) end,P).
 
 run_test_() ->
     Props = [

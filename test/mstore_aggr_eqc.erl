@@ -5,8 +5,8 @@
 -include("../include/mstore.hrl").
 
 -import(mstore_heler, [int_array/0, float_array/0, pos_int/0, non_neg_int/0,
-                       i_or_f_list/0, i_or_f_array/0, non_empty_i_or_f_array/0,
-                       non_empty_i_or_f_list/0]).
+                       i_or_f_list/0, i_or_f_array/0,
+                       non_empty_i_or_f_list/0, out/1]).
 
 -compile(export_all).
 
@@ -14,48 +14,25 @@ n_length_chunks_prop() ->
     ?FORALL({L, N}, {list(int()), pos_int()},
             ceiling(length(L) / N) =:= length(n_length_chunks(L, N))).
 
-n_length_chunks_test() ->
-    ?assert(eqc:quickcheck(n_length_chunks_prop())).
-
-avg_prop() ->
+avg_all_prop() ->
     ?FORALL(L, non_empty_i_or_f_list(),
-            [lists:sum(L)/length(L)] == ?B2L(mstore_aggr:avg(?L2B(L), length(L)))),
-    ?FORALL({L, N}, {non_empty_i_or_f_list(), pos_int()},
-            ceiling(length(L)/N) == length(?B2L(mstore_aggr:avg(?L2B(L), N)))),
-    ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
-            begin
-                SL = avg(L, N),
-                SB = mstore_bin:to_list(mstore_aggr:avg(B, N)),
-                ?WHENFAIL(io:format("~p =/= ~p", [SL, SB]),
-                          SL =:= SB)
-            end).
+            [lists:sum(L)/length(L)] == ?B2L(mstore_aggr:avg(?L2B(L), length(L)))).
 
-avg_test() ->
-    ?assert(eqc:quickcheck(avg_prop())).
+avg_len_prop() ->
+    ?FORALL({L, N}, {non_empty_i_or_f_list(), pos_int()},
+            ceiling(length(L)/N) == length(?B2L(mstore_aggr:avg(?L2B(L), N)))).
+
+avg_impl_prop() ->
+    ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
+            avg(L, N) == mstore_bin:to_list(mstore_aggr:avg(B, N))).
 
 sum_prop() ->
     ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
-            begin
-                SL = sum(L, N),
-                SB = mstore_bin:to_list(mstore_aggr:sum(B, N)),
-                ?WHENFAIL(io:format("~p =/= ~p", [SL, SB]),
-                          SL =:= SB)
-            end).
-
-sum_test() ->
-    ?assert(eqc:quickcheck(sum_prop())).
+            sum(L, N) == mstore_bin:to_list(mstore_aggr:sum(B, N))).
 
 der_prop() ->
     ?FORALL({_, L, B}, i_or_f_array(),
-            begin
-                DL = derivate(L),
-                DB = mstore_bin:to_list(mstore_aggr:derivate(B)),
-                ?WHENFAIL(io:format("~p =/= ~p", [DL, DB]),
-                          DL =:= DB)
-            end).
-
-der_test() ->
-    ?assert(eqc:quickcheck(der_prop())).
+            derivate(L) == mstore_bin:to_list(mstore_aggr:derivate(B))).
 
 avg(L, N) ->
     apply_n(L, N, fun avg_/2).
@@ -81,6 +58,10 @@ derivate(H, [H1 | T], Acc) ->
 derivate(_, [], Acc) ->
     lists:reverse(Acc).
 
+ceiling_prop() ->
+    ?FORALL(F, real(),
+            F =< ceiling(F)).
+
 %% Taken from: http://schemecookbook.org/Erlang/NumberRounding
 ceiling(X) ->
     T = erlang:trunc(X),
@@ -96,3 +77,20 @@ n_length_chunks(List,Len) when Len > length(List) ->
 n_length_chunks(List,Len) ->
     {Head,Tail} = lists:split(Len,List),
     [Head | n_length_chunks(Tail,Len)].
+
+run_test_() ->
+    Props = [
+             fun n_length_chunks_prop/0,
+             fun avg_all_prop/0,
+             fun avg_len_prop/0,
+             fun avg_impl_prop/0,
+             fun sum_prop/0,
+             fun der_prop/0,
+             fun ceiling_prop/0
+             ],
+    [
+     begin
+         P = out(Prop()),
+         ?_assert(quickcheck(numtests(500,P)))
+     end
+     || Prop <- Props].

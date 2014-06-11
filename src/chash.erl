@@ -87,7 +87,8 @@ contains_name(Name, CHash) ->
 %%      is not much larger than the intended eventual number of
 %%       participating nodes, then performance will suffer.
 -spec fresh(NumPartitions :: num_partitions(), SeedNode :: chash_node()) -> chash().
-fresh(NumPartitions, SeedNode) ->
+fresh(NumPartitions, SeedNode) when NumPartitions > 1,
+                                    (NumPartitions band (NumPartitions - 1) =:= 0) ->
     Inc = ring_increment(NumPartitions),
     {NumPartitions, [{IndexAsInt, SeedNode} ||
                         IndexAsInt <- lists:seq(0,(?RINGTOP-1),Inc)]}.
@@ -133,7 +134,7 @@ merge_rings(CHashA,CHashB) ->
 %% @doc Given the integer representation of a chash key,
 %%      return the next ring index integer value.
 -spec next_index(IntegerKey :: integer(), CHash :: chash()) -> index_as_int().
-next_index(IntegerKey, {NumPartitions, _}) ->
+next_index(IntegerKey, {NumPartitions, _Nodes}) ->
     Inc = ring_increment(NumPartitions),
     (((IntegerKey div Inc) + 1) rem NumPartitions) * Inc.
 
@@ -234,14 +235,14 @@ update_test() ->
     Node = 'old@host', NewNode = 'new@host',
 
     %% Create a fresh ring...
-    CHash = chash:fresh(5, Node),
+    CHash = chash:fresh(4, Node),
     GetNthIndex = fun(N, {_, Nodes}) -> {Index, _} = lists:nth(N, Nodes), Index end,
 
     %% Test update...
     FirstIndex = GetNthIndex(1, CHash),
     ThirdIndex = GetNthIndex(3, CHash),
-    {5, [{_, NewNode}, {_, Node}, {_, Node}, {_, Node}, {_, Node}, {_, Node}]} = update(FirstIndex, NewNode, CHash),
-    {5, [{_, Node}, {_, Node}, {_, NewNode}, {_, Node}, {_, Node}, {_, Node}]} = update(ThirdIndex, NewNode, CHash).
+    {4, [{_, NewNode}, {_, Node}, {_, Node}, {_, Node}]} = update(FirstIndex, NewNode, CHash),
+    {4, [{_, Node}, {_, Node}, {_, NewNode}, {_, Node}]} = update(ThirdIndex, NewNode, CHash).
 
 contains_test() ->
     CHash = chash:fresh(8, the_node),
