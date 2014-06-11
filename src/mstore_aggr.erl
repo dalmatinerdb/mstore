@@ -44,7 +44,7 @@ sum(Data, Count) ->
             sum_int(Data, 0, 0, Count, Count, <<>>);
         float ->
             sum_float(Data, 0.0, 0.0, Count, Count, <<>>);
-        unknown ->
+        undefined ->
             mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
     end.
 
@@ -87,7 +87,7 @@ derivate(<<?NONE, 0:?BITS/signed-integer, Rest/binary>>) ->
             der_int(Rest, 0, <<>>);
         float ->
             der_float(Rest, 0.0, <<>>);
-        unknown ->
+        undefined ->
             mstore_bin:empty(round(byte_size(Rest)/?DATA_SIZE))
     end.
 

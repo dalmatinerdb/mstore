@@ -21,7 +21,7 @@ to_list(Bin) ->
             to_list_int(Bin, 0, []);
         float ->
             to_list_float(Bin, 0.0, []);
-        unknown ->
+        undefined ->
             [0 || _ <- lists:seq(1, round(byte_size(Bin)/?DATA_SIZE))]
 end.
 
@@ -47,7 +47,7 @@ find_type(<<?FLOAT, _:?BITS/float, _/binary>>) ->
 find_type(<<?NONE, _:?BITS/signed-integer, Rest/binary>>) ->
     find_type(Rest);
 find_type(_) ->
-    unknown.
+    undefined.
 
 empty(Length) ->
     <<0:((?BITS+8)*Length)/signed-integer>>.
