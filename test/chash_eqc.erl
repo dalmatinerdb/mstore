@@ -18,7 +18,7 @@ chash() ->
     ?LET(N, size(),
          {N, chash:fresh(N, first)}).
 
-size_prop() ->
+prop_size() ->
     ?FORALL(N, non_neg_int(),
             try
                 chash:size(chash:fresh(N, the_node)) == N
@@ -27,7 +27,7 @@ size_prop() ->
                     not (N > 1 andalso (N band (N - 1) =:= 0))
             end).
 
-update_prop() ->
+prop_update() ->
     ?FORALL({N, CHash}, chash(),
             ?FORALL(Pos, choose(1, N),
                     begin
@@ -40,12 +40,12 @@ update_prop() ->
                             not chash:contains_name(new, CHash)
                     end)).
 
-successors_length_prop() ->
+prop_successors_length() ->
     ?FORALL({Rand, {N, CHash}}, {int(), chash()},
             ?FORALL(Picks, choose(1, N),
                     length(chash:successors(chash:key_of(Rand), CHash, Picks)) == Picks)).
 
-inverse_pred_prop() ->
+prop_inverse_pred() ->
     ?FORALL({Rand, {_, CHash}}, {int(), chash()},
             begin
                 Key = chash:key_of(Rand),
@@ -54,7 +54,7 @@ inverse_pred_prop() ->
                 S == lists:reverse(P)
             end).
 
-next_index_prop() ->
+prop_next_index() ->
     ?FORALL({Rand, {_, CHash}}, {int(), chash()},
             begin
                 <<I:160/integer>> = chash:key_of(Rand),
@@ -62,7 +62,7 @@ next_index_prop() ->
                 I =< I1 orelse I1 == 0
             end).
 
-predecessors_int_prop() ->
+prop_predecessors_int() ->
     ?FORALL({Rand, {_, CHash}}, {int(), chash()},
             begin
                 B = <<I:160/integer>> = chash:key_of(Rand),
@@ -71,12 +71,12 @@ predecessors_int_prop() ->
 
 run_test_() ->
     Props = [
-             fun size_prop/0,
-             fun update_prop/0,
-             fun successors_length_prop/0,
-             fun inverse_pred_prop/0,
-             fun next_index_prop/0,
-             fun predecessors_int_prop/0
+             fun prop_size/0,
+             fun prop_update/0,
+             fun prop_successors_length/0,
+             fun prop_inverse_pred/0,
+             fun prop_next_index/0,
+             fun prop_predecessors_int/0
             ],
     [
      begin

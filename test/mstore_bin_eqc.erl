@@ -20,27 +20,28 @@ non_obvious_list() ->
                  [{float, <<(mstore_bin:empty(N))/binary, (mstore_bin:from_list(L))/binary>>} || L =/= []] ++
                      [{undefined, <<(mstore_bin:empty(N))/binary, (mstore_bin:from_list(L))/binary>>} || L == []]))]).
 
-empty_prop() ->
+prop_empty() ->
     ?FORALL(Length, non_neg_int(),
             byte_size(mstore_bin:empty(Length)) == Length*?DATA_SIZE).
 
-l2b_b2l_prop() ->
+prop_l2b_b2l() ->
     ?FORALL(List, i_or_f_list(),
             List == ?B2L(?L2B(List))).
 
-b2l_prop() ->
+prop_b2l() ->
     ?FORALL({_, L, B}, i_or_f_array(),
             L == ?B2L(B)).
-find_type_prop() ->
+
+prop_find_type() ->
     ?FORALL({T, B}, non_obvious_list(),
             T == mstore_bin:find_type(B)).
 
 run_test_() ->
     Props = [
-             fun empty_prop/0,
-             fun b2l_prop/0,
-             fun find_type_prop/0,
-             fun l2b_b2l_prop/0
+             fun prop_empty/0,
+             fun prop_b2l/0,
+             fun prop_find_type/0,
+             fun prop_l2b_b2l/0
              ],
     [
      begin

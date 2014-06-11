@@ -10,27 +10,27 @@
 
 -compile(export_all).
 
-n_length_chunks_prop() ->
+prop_n_length_chunks() ->
     ?FORALL({L, N}, {list(int()), pos_int()},
             ceiling(length(L) / N) =:= length(n_length_chunks(L, N))).
 
-avg_all_prop() ->
+prop_avg_all() ->
     ?FORALL(L, non_empty_i_or_f_list(),
             [lists:sum(L)/length(L)] == ?B2L(mstore_aggr:avg(?L2B(L), length(L)))).
 
-avg_len_prop() ->
+prop_avg_len() ->
     ?FORALL({L, N}, {non_empty_i_or_f_list(), pos_int()},
             ceiling(length(L)/N) == length(?B2L(mstore_aggr:avg(?L2B(L), N)))).
 
-avg_impl_prop() ->
+prop_avg_impl() ->
     ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
             avg(L, N) == mstore_bin:to_list(mstore_aggr:avg(B, N))).
 
-sum_prop() ->
+prop_sum() ->
     ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
             sum(L, N) == mstore_bin:to_list(mstore_aggr:sum(B, N))).
 
-der_prop() ->
+prop_der() ->
     ?FORALL({_, L, B}, i_or_f_array(),
             derivate(L) == mstore_bin:to_list(mstore_aggr:derivate(B))).
 
@@ -58,7 +58,7 @@ derivate(H, [H1 | T], Acc) ->
 derivate(_, [], Acc) ->
     lists:reverse(Acc).
 
-ceiling_prop() ->
+prop_ceiling() ->
     ?FORALL(F, real(),
             F =< ceiling(F)).
 
@@ -80,13 +80,13 @@ n_length_chunks(List,Len) ->
 
 run_test_() ->
     Props = [
-             fun n_length_chunks_prop/0,
-             fun avg_all_prop/0,
-             fun avg_len_prop/0,
-             fun avg_impl_prop/0,
-             fun sum_prop/0,
-             fun der_prop/0,
-             fun ceiling_prop/0
+             fun prop_n_length_chunks/0,
+             fun prop_avg_all/0,
+             fun prop_avg_len/0,
+             fun prop_avg_impl/0,
+             fun prop_sum/0,
+             fun prop_der/0,
+             fun prop_ceiling/0
              ],
     [
      begin
