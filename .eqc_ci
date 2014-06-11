@@ -1,3 +1,3 @@
-{build, "make; cd test; erl -eval 'make:all([{parse_transform, eqc_cover}])' -s init halt"}.
+{build, "make; cd test; erl -eval 'make:all([{parse_transform, eqc_cover}])' -s init stop"}.
 {test_path, "test"}.
 {deps, "ebin"}.
