@@ -1,2 +1,2 @@
 {build, "make test"}.
-{test_path, "."}.
+{test_path, "test"}.
