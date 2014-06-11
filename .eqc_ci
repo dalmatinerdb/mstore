@@ -1,2 +1,3 @@
 {build, "make test"}.
 {test_path, "test"}.
+{test_root, "test"}.
