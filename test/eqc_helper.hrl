@@ -21,3 +21,23 @@ run_test_() ->
     [{"Running " ++ N ++ " propperty test",
       ?_assert(quickcheck(numtests(500,  ?OUT(?MODULE:A()))))}
      || {N, A} <- E2].
+
+
+%% Include this file at the END of _eqc.erl file!
+%%
+%% Allows running EQC in both EQC-CI and EQC offline. Placing eqc files in the
+%% test directory will allow EUnit to automatically discover EQC tests by the
+%% same rules EQC-CI does.
+%% Also when running on the console output is nice and colored. The following
+%% Makefile rules are handy when using rebar:
+%%
+%% qc: clean all
+%%        $(REBAR) -C rebar_eqc.config compile eunit skip_deps=true --verbose
+%%
+%% eqc-ci: clean all
+%%        $(REBAR) -D EQC_CI -C rebar_eqc.config compile eunit skip_deps=true --verbose
+%%
+%% The corresponding .eqc_ci file would look like this:
+%%
+%%{build, "make eqc-ci"}.
+%%{test_path, "."}.
