@@ -19,7 +19,7 @@ run_test_() ->
     E1 = [{atom_to_list(N), N} || {N, 0} <- E],
     E2 = [{N, A} || {"prop_" ++ N, A} <- E1],
     [{"Running " ++ N ++ " propperty test",
-      ?_assert(quickcheck(numtests(500,  ?OUT(?MODULE:A()))))}
+      {timeout, 60, ?_assert(quickcheck(numtests(500,  ?OUT(?MODULE:A()))))}}
      || {N, A} <- E2].
 
 

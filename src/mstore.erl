@@ -13,15 +13,28 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+-compile(export_all).
 
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
 
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, close/1, open/1, open/3, metrics/1]).
-
+-export([put/4, get/4, new/3, delete/1, close/1, open/1, open/3, metrics/1]).
 
 %% @doc Opens an existing mstore.
+
+delete(MSet = #mset{dir=Dir, chash=CHash}) ->
+    close(MSet),
+    Buckets = [[Dir, $/ | integer_to_list(I)] || {I, _} <- chash:nodes(CHash)],
+    [delete_chash_bucket(Bucket) || Bucket <- Buckets],
+    file:delete([Dir, $/ | "mstore"]),
+    file:del_dir(Dir).
+
+delete_chash_bucket(Dir) ->
+    {ok, Files} = file:list_dir(Dir),
+    Files1 = [[Dir, $/ | File] || File <- Files],
+    [file:delete(F) || F <- Files1],
+    file:del_dir(Dir).
 
 -spec open(Dir :: string()) -> {ok, #mset{}} | {error, not_found}.
 
@@ -39,12 +52,16 @@ new(NumFiles, FileSize, Dir) when is_binary(Dir) ->
 
 new(NumFiles, FileSize, Dir) ->
     case file:consult([Dir | "/mstore"]) of
+        {ok, [{F, _N, _Seed, _Metrics}]} when F =/= FileSize ->
+            {error, filesize_missmatch};
+        {ok, [{_F, N, _Seed, _Metrics}]} when N =/= NumFiles ->
+            {error, ring_size_missmatch};
         {ok, [{F, N, Seed, Metrics}]} when F =:= FileSize,
                                            N =:= NumFiles ->
             {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir,
                        seed=Seed, metrics=gb_sets:from_list(Metrics)}};
-        {ok, _} ->
-            {error, index_missmatch};
+        {ok, I} ->
+            {error, {bad_index, I}};
         _ ->
             Seed = erlang:phash2(now()),
             file:make_dir(Dir),
@@ -54,6 +71,7 @@ new(NumFiles, FileSize, Dir) ->
             [file:make_dir([Dir, $/ | integer_to_list(I)]) || {I, _} <- Idxs],
             {ok, MSet}
     end.
+
 save_set(#mset{dir=D, size=Size, chash=CHash, seed=Seed,metrics=Metrics}) ->
     NumFiles = chash:size(CHash),
     file:write_file([D | "/mstore"],
@@ -182,6 +200,12 @@ make_splits(Time, Count, Size, Acc) ->
     end.
 
 
+close(#mset{chash=CHash}) ->
+    Nodes = chash:nodes(CHash),
+    Stores = lists:flatten([V || {_K, V} <- Nodes]),
+    Stores1 = [V || {_K, V} <- Stores],
+    [close(S) || S <- Stores1],
+    ok;
 close(#mstore{file=F}) ->
     file:close(F).
 
@@ -222,23 +246,7 @@ write(M=#mstore{offset=Offset, size=S}, Metric, Position, Value)
   when is_binary(Value),
        Position >= Offset,
        (Position - Offset) + (byte_size(Value)/?DATA_SIZE) =< S ->
-    do_write(M, Metric, Position, Value);
-
-write(M=#mstore{offset=Offset, size=S}, Metric, Position, [V0 | _] = Values)
-  when Position >= Offset,
-       (Position - Offset) + length(Values) =< S,
-       is_integer(V0) ->
-    do_write(M, Metric, Position, << <<?INT, V:?BITS/integer>> || V <- Values >>);
-
-write(M=#mstore{offset=Offset, size=S}, Metric, Position, [V0 | _] = Values)
-  when Position >= Offset,
-       (Position - Offset) + length(Values) =< S,
-       is_float(V0) ->
-    do_write(M, Metric, Position, << <<?FLOAT, V:?BITS/float>> || V <- Values >>);
-
-write(#mstore{offset=O, size=S}, _, P, _) ->
-    io:format("Out of scope: Offset:~p Size:~p Position:~p~n.", [O, S, P]),
-    {error, out_of_scope}.
+    do_write(M, Metric, Position, Value).
 
 do_write(M=#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Value) ->
     {M1, Base} =
