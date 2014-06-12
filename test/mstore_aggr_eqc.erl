@@ -78,19 +78,4 @@ n_length_chunks(List,Len) ->
     {Head,Tail} = lists:split(Len,List),
     [Head | n_length_chunks(Tail,Len)].
 
-run_test_() ->
-    Props = [
-             fun prop_n_length_chunks/0,
-             fun prop_avg_all/0,
-             fun prop_avg_len/0,
-             fun prop_avg_impl/0,
-             fun prop_sum/0,
-             fun prop_der/0,
-             fun prop_ceiling/0
-             ],
-    [
-     begin
-         P = out(Prop()),
-         ?_assert(quickcheck(numtests(500,P)))
-     end
-     || Prop <- Props].
+-include("eqc_helper.hrl").

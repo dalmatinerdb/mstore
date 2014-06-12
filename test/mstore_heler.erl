@@ -4,8 +4,7 @@
 -include("../include/mstore.hrl").
 
 -export([int_array/0, float_array/0, pos_int/0, non_neg_int/0, i_or_f_list/0,
-         i_or_f_array/0, non_empty_i_or_f_list/0,
-         out/1]).
+         i_or_f_array/0, non_empty_i_or_f_list/0]).
 
 i_or_f_array() ->
     oneof([int_array(), float_array()]).
@@ -56,6 +55,3 @@ to_bin([{true, V} | R], Acc) when is_float(V) ->
 
 to_bin([], Acc) ->
     Acc.
-
-out(P) ->
-   on_output(fun(S,F) -> io:format(user, S, F) end,P).

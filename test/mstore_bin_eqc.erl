@@ -36,16 +36,4 @@ prop_find_type() ->
     ?FORALL({T, B}, non_obvious_list(),
             T == mstore_bin:find_type(B)).
 
-run_test_() ->
-    Props = [
-             fun prop_empty/0,
-             fun prop_b2l/0,
-             fun prop_find_type/0,
-             fun prop_l2b_b2l/0
-             ],
-    [
-     begin
-         P = out(Prop()),
-         ?_assert(quickcheck(numtests(500,P)))
-     end
-     || Prop <- Props].
+-include("eqc_helper.hrl").

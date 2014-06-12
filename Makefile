@@ -16,8 +16,11 @@ clean:
 distclean: clean
 	$(REBAR) delete-deps
 
-qc: all
+qc: clean all
 	$(REBAR) -C rebar_eqc.config compile eunit skip_deps=true --verbose
+
+eqc-ci: clean all
+	$(REBAR) -D EQC_CI -C rebar_eqc.config compile eunit skip_deps=true --verbose
 
 test: all
 	-rm -r .eunit

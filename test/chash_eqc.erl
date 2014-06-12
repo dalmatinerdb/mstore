@@ -6,7 +6,7 @@
 
 -import(mstore_heler, [int_array/0, float_array/0, pos_int/0, non_neg_int/0,
                        i_or_f_list/0, i_or_f_array/0,
-                       non_empty_i_or_f_list/0, out/1]).
+                       non_empty_i_or_f_list/0]).
 
 -compile(export_all).
 
@@ -69,18 +69,4 @@ prop_predecessors_int() ->
                 chash:predecessors(B, CHash) == chash:predecessors(I, CHash)
             end).
 
-run_test_() ->
-    Props = [
-             fun prop_size/0,
-             fun prop_update/0,
-             fun prop_successors_length/0,
-             fun prop_inverse_pred/0,
-             fun prop_next_index/0,
-             fun prop_predecessors_int/0
-            ],
-    [
-     begin
-         P = out(Prop()),
-         ?_assert(quickcheck(numtests(500,P)))
-     end
-     || Prop <- Props].
+-include("eqc_helper.hrl").
