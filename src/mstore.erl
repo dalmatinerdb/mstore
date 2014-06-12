@@ -19,7 +19,7 @@
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
 
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, delete/1, close/1, open/1, open/3, metrics/1]).
+-export([put/4, get/4, new/3, delete/1, close/1, open/1, metrics/1]).
 
 %% @doc Opens an existing mstore.
 
@@ -149,7 +149,7 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     FileBase = (Time div S)*S,
     close(F),
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = open(Base, FileBase, S),
+    {ok, F1} = open(Base, FileBase, S, write),
     {ok, F2} = write(F1, Metric, Time, Data),
     do_put(MSet, Metric, R, DataRest, [{FileBase, F2}, First]);
 
@@ -159,7 +159,7 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = open(Base, FileBase, S),
+    {ok, F1} = open(Base, FileBase, S, write),
     {ok, F2} = write(F1, Metric, Time, Data),
     do_put(MSet, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
@@ -176,7 +176,7 @@ do_get(_, _, _, [], Acc) ->
 do_get(S, Dir, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
     Base = [Dir, "/", integer_to_list(FileBase)],
-    {ok, F} = open(Base, FileBase, S),
+    {ok, F} = open(Base, FileBase, S, read),
     case read(F, Metric, Time, Count) of
         {ok, D} ->
             close(F),
@@ -209,14 +209,20 @@ close(#mset{chash=CHash}) ->
 close(#mstore{file=F}) ->
     file:close(F).
 
-open(File, Offset, Size) when is_binary(File) ->
-    open(binary_to_list(File), Offset, Size);
+open(File, Offset, Size, Mode) when is_binary(File) ->
+    open(binary_to_list(File), Offset, Size, Mode);
 
-open(File, Offset, Size) ->
+open(File, Offset, Size, Mode) ->
+    FileOpts = case Mode of
+                   read ->
+                       [read | ?OPTS];
+                   write ->
+                       [read, write | ?OPTS]
+               end,
     case file:consult([File | ".idx"]) of
         {ok, [{O, S, Idx}]} when Offset =:= O,
                                  Size =:= S ->
-            case file:open([File | ".mstore"], [read, write | ?OPTS]) of
+            case file:open([File | ".mstore"], FileOpts) of
                 {ok, F} ->
                     Tree=gb_trees:from_orddict(Idx),
                     {ok, #mstore{index=Tree, name=File, file=F, offset=Offset,
