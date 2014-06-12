@@ -20,7 +20,7 @@ qc: clean all
 	$(REBAR) -C rebar_eqc.config compile eunit skip_deps=true --verbose
 
 eqc-ci: clean all
-	$(REBAR) -D EQC_CI -C rebar_eqc.config compile eunit skip_deps=true --verbose
+	$(REBAR) -D EQC_CI -C rebar_eqc_ci.config compile eunit skip_deps=true --verbose
 
 test: all
 	-rm -r .eunit
