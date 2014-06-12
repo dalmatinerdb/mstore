@@ -12,8 +12,8 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--endif.
 -compile(export_all).
+-endif.
 
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
@@ -209,9 +209,6 @@ close(#mset{chash=CHash}) ->
 close(#mstore{file=F}) ->
     file:close(F).
 
-open(File, Offset, Size, Mode) when is_binary(File) ->
-    open(binary_to_list(File), Offset, Size, Mode);
-
 open(File, Offset, Size, Mode) ->
     FileOpts = case Mode of
                    read ->
@@ -279,11 +276,7 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             Base = Pos*S*?DATA_SIZE,
             P = Base+((Position - Offset)*?DATA_SIZE),
             file:pread(F, P, Count*?DATA_SIZE)
-    end;
-
-read(_,_,_,_) ->
-    {error, out_of_scope}.
-
+    end.
 
 write_index(#mstore{name=F, index=I, offset=O, size=S}) ->
     file:write_file([F | ".idx"], io_lib:format("~p.", [{O, S, gb_trees:to_list(I)}])).

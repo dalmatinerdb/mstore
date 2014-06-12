@@ -30,8 +30,7 @@ prop_cout_parts() ->
 
 prop_max_size_make_splits() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},
-            length([false || {_, C} <-mstore:make_splits(Time, Count, Size, []),
-                   C > Size]) == 0).
+            length([false || {_, C} <- mstore:make_splits(Time, Count, Size, []), C > Size]) == 0).
 
 prop_incomplete_make_splits() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},

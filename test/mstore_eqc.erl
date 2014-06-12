@@ -29,11 +29,6 @@ insert(Buckets, FileSize, Size) ->
                {{call, ?S, put, [S, M, O, V]},
                 {call, ?G, enter, [O, V, T]}})).
 
-close(Buckets, FileSize, Size) ->
-    ?LAZY(?LET({S, T},
-               store(Buckets, FileSize, Size-1),
-               {{call, ?S, close, [S]}, T})).
-
 reopen(Buckets, FileSize, Size) ->
     ?LAZY(?LET({S, T},
                store(Buckets, FileSize, Size-1),
@@ -70,9 +65,6 @@ chash_size() ->
 size() ->
     choose(1000,2000).
 
-length() ->
-    choose(200, 5000).
-
 offset() ->
     choose(0, 5000).
 
@@ -94,8 +86,12 @@ prop_read_write() ->
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
                 Res2 = mstore_bin:to_list(Res1),
+                Metrics = ?S:metrics(S2),
                 ?S:delete(S2),
-                Res2 == Data
+                Res2 == Data andalso
+                    Metrics == [Metric]
+                    
+                
             end).
 
 prop_gb_comp() ->
