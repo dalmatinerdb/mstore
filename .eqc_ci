@@ -1,4 +1,5 @@
 %-*-Erlang-*-
 {build, "make eqc-ci"}.
 {test_path, ".eunit"}.
+{deps, "deps/chash/ebin"}.
 %{test_root, ".eunit"}.
