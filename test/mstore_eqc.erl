@@ -8,8 +8,6 @@
 -import(mstore_heler, [int_array/0, float_array/0, pos_int/0, non_neg_int/0,
                        i_or_f_list/0, i_or_f_array/0, non_empty_i_or_f_list/0]).
 
--record(state, {size, data}).
-
 -compile(export_all).
 %%%-------------------------------------------------------------------
 %%% Generators
@@ -78,10 +76,10 @@ unlist([E]) ->
 %%% Properties
 %%%-------------------------------------------------------------------
 prop_read_write() ->
-    os:cmd("rm -r " ++ ?DIR),
     ?FORALL({Metric, Size, Time, Data},
             {string(), size(), offset(), non_empty_i_or_f_list()},
             begin
+                os:cmd("rm -r " ++ ?DIR),
                 {ok, S1} = ?S:new(2, Size, ?DIR),
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
@@ -92,11 +90,27 @@ prop_read_write() ->
                     Metrics == [Metric]
             end).
 
+prop_read_len() ->
+    ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset},
+            {string(), size(), offset(), non_empty_i_or_f_list(), int(), int()},
+            ?IMPLIES((Time + TimeOffset) > 0 andalso
+                     (length(Data) + LengthOffset) > 0,
+                     begin
+                         os:cmd("rm -r " ++ ?DIR),
+                         {ok, S1} = ?S:new(2, Size, ?DIR),
+                         S2 = ?S:put(S1, Metric, Time, Data),
+                         ReadLen = length(Data) + LengthOffset,
+                         ReadTime = Time + TimeOffset,
+                         {ok, Read} = ?S:get(S2, Metric, ReadTime, ReadLen),
+                         ?S:delete(S2),
+                         mstore_bin:length(Read) == ReadLen
+                     end)).
+
 prop_gb_comp() ->
-    os:cmd("rm -r " ++ ?DIR),
     ?FORALL({Buckets, FileSize}, {chash_size(), size()},
             ?FORALL(D, store(Buckets, FileSize),
                     begin
+                        os:cmd("rm -r " ++ ?DIR),
                         {S, T} = eval(D),
                         List = ?G:to_list(T),
                         List1 = [{?S:get(S, ?M, Time, 1), V} || {Time, V} <- List],

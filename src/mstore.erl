@@ -180,7 +180,23 @@ do_get(S, Dir, Metric, [{Time, Count} | R], Acc) ->
     case read(F, Metric, Time, Count) of
         {ok, D} ->
             close(F),
-            do_get(S, Dir, Metric, R, <<Acc/binary, D/binary>>);
+            Acc1 = <<Acc/binary, D/binary>>,
+            Acc2 = case mstore_bin:length(D) of
+                       L when L < Count ->
+                           Missing = Count - L,
+                           <<Acc1/binary, (mstore_bin:empty(Missing))/binary>>;
+                       _ ->
+                           Acc1
+                   end,
+            do_get(S, Dir, Metric, R, Acc2);
+        {error,not_found} ->
+            close(F),
+            Acc1 = <<Acc/binary, (mstore_bin:empty(Count))/binary>>,
+            do_get(S, Dir, Metric, R, Acc1);
+        eof ->
+            close(F),
+            Acc1 = <<Acc/binary, (mstore_bin:empty(Count))/binary>>,
+            do_get(S, Dir, Metric, R, Acc1);
         E ->
             close(F),
             E

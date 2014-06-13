@@ -2,8 +2,7 @@
 
 -include("mstore.hrl").
 
--export([from_list/1, to_list/1, find_type/1, empty/1]).
-
+-export([from_list/1, to_list/1, find_type/1, empty/1, length/1, combine/2]).
 
 from_list([]) ->
     <<>>;
@@ -49,5 +48,31 @@ find_type(<<?NONE, _:?BITS/signed-integer, Rest/binary>>) ->
 find_type(_) ->
     undefined.
 
+length(B) ->
+    trunc(byte_size(B)/?DATA_SIZE).
+
+empty(0) ->
+    <<>>;
+
 empty(Length) ->
     <<0:((?BITS+8)*Length)/signed-integer>>.
+
+combine(A, B) ->
+    combine(A, B, <<>>).
+
+combine(<<?NONE, _:?BITS/signed-integer, R1/binary>>,
+        <<D:?DATA_SIZE/binary, R2/binary>>,
+        Acc) ->
+    combine(R1, R2, <<Acc/binary, D/binary>>);
+combine(<<D:?DATA_SIZE/binary, R1/binary>>,
+        <<_:?DATA_SIZE/binary, R2/binary>>,
+        Acc) ->
+    combine(R1, R2, <<Acc/binary, D/binary>>);
+combine(<<>>, <<>>, Acc) ->
+    Acc;
+
+combine(<<>>, D, Acc) ->
+    <<Acc/binary, D/binary>>;
+combine(D, <<>>, Acc) ->
+    <<Acc/binary, D/binary>>.
+
