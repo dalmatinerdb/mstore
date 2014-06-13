@@ -8,7 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(mstore_aggr).
 
--export([sum/2, avg/2, derivate/1]).
+-export([sum/2, avg/2, min/2, max/2, derivate/1]).
 -include("mstore.hrl").
 
 
@@ -71,6 +71,110 @@ sum_int(<<>>, _, 0, _Count, _Count, Acc) ->
     Acc;
 sum_int(<<>>, _, Sum, _, _, Acc) ->
     <<Acc/binary, ?INT, Sum:?BITS/signed-integer>>.
+
+min(<<>>, _) ->
+    <<>>;
+min(Data, Count) ->
+    case mstore_bin:find_type(Data) of
+        integer ->
+            min_int(Data, undefined, Count, Count, <<>>);
+        float ->
+            min_float(Data, undefined, Count, Count, <<>>);
+        undefined ->
+            mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
+    end.
+
+min_int(R, undefined, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?NONE, 0:?BITS/signed-integer>>,
+    min_int(R, undefined, Count, Count, Acc1);
+min_int(R, V, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?INT, V:?BITS/signed-integer>>,
+    min_int(R, undefined, Count, Count, Acc1);
+min_int(<<?INT, V:?BITS/signed-integer, R/binary>>, undefined, N, Count, Acc) ->
+    min_int(R, V, N-1, Count, Acc);
+min_int(<<?INT, V:?BITS/signed-integer, R/binary>>, Min, N, Count, Acc)
+  when V <  Min->
+    min_int(R, V, N-1, Count, Acc);
+min_int(<<_, _:?BITS/signed-integer, R/binary>>, Min, N, Count, Acc) ->
+    min_int(R, Min, N-1, Count, Acc);
+min_int(<<>>, _, _Count, _Count, Acc) ->
+    Acc;
+min_int(<<>>, undefined, _, _, Acc) ->
+    <<Acc/binary, ?NONE, 0:?BITS/signed-integer>>;
+min_int(<<>>, Min, _, _, Acc) ->
+    <<Acc/binary, ?INT, Min:?BITS/signed-integer>>.
+
+min_float(R, undefined, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?NONE, 0:?BITS/float>>,
+    min_float(R, undefined, Count, Count, Acc1);
+min_float(R, V, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?FLOAT, V:?BITS/float>>,
+    min_float(R, undefined, Count, Count, Acc1);
+min_float(<<?FLOAT, V:?BITS/float, R/binary>>, undefined, N, Count, Acc) ->
+    min_float(R, V, N-1, Count, Acc);
+min_float(<<?FLOAT, V:?BITS/float, R/binary>>, Min, N, Count, Acc)
+  when V <  Min->
+    min_float(R, V, N-1, Count, Acc);
+min_float(<<_, _:?BITS/float, R/binary>>, Min, N, Count, Acc) ->
+    min_float(R, Min, N-1, Count, Acc);
+min_float(<<>>, _, _Count, _Count, Acc) ->
+    Acc;
+min_float(<<>>, undefined, _, _, Acc) ->
+    <<Acc/binary, ?NONE, 0:?BITS/float>>;
+min_float(<<>>, Min, _, _, Acc) ->
+    <<Acc/binary, ?FLOAT, Min:?BITS/float>>.
+
+max(<<>>, _) ->
+    <<>>;
+max(Data, Count) ->
+    case mstore_bin:find_type(Data) of
+        integer ->
+            max_int(Data, undefined, Count, Count, <<>>);
+        float ->
+            max_float(Data, undefined, Count, Count, <<>>);
+        undefined ->
+            mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
+    end.
+
+max_int(R, undefined, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?NONE, 0:?BITS/signed-integer>>,
+    max_int(R, undefined, Count, Count, Acc1);
+max_int(R, V, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?INT, V:?BITS/signed-integer>>,
+    max_int(R, undefined, Count, Count, Acc1);
+max_int(<<?INT, V:?BITS/signed-integer, R/binary>>, undefined, N, Count, Acc) ->
+    max_int(R, V, N-1, Count, Acc);
+max_int(<<?INT, V:?BITS/signed-integer, R/binary>>, Max, N, Count, Acc)
+  when V >  Max->
+    max_int(R, V, N-1, Count, Acc);
+max_int(<<_, _:?BITS/signed-integer, R/binary>>, Max, N, Count, Acc) ->
+    max_int(R, Max, N-1, Count, Acc);
+max_int(<<>>, _, _Count, _Count, Acc) ->
+    Acc;
+max_int(<<>>, undefined, _, _, Acc) ->
+    <<Acc/binary, ?NONE, 0:?BITS/signed-integer>>;
+max_int(<<>>, Max, _, _, Acc) ->
+    <<Acc/binary, ?INT, Max:?BITS/signed-integer>>.
+
+max_float(R, undefined, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?NONE, 0:?BITS/float>>,
+    max_float(R, undefined, Count, Count, Acc1);
+max_float(R, V, 0, Count, Acc) ->
+    Acc1 = <<Acc/binary, ?FLOAT, V:?BITS/float>>,
+    max_float(R, undefined, Count, Count, Acc1);
+max_float(<<?FLOAT, V:?BITS/float, R/binary>>, undefined, N, Count, Acc) ->
+    max_float(R, V, N-1, Count, Acc);
+max_float(<<?FLOAT, V:?BITS/float, R/binary>>, Max, N, Count, Acc)
+  when V >  Max->
+    max_float(R, V, N-1, Count, Acc);
+max_float(<<_, _:?BITS/float, R/binary>>, Max, N, Count, Acc) ->
+    max_float(R, Max, N-1, Count, Acc);
+max_float(<<>>, _, _Count, _Count, Acc) ->
+    Acc;
+max_float(<<>>, undefined, _, _, Acc) ->
+    <<Acc/binary, ?NONE, 0:?BITS/float>>;
+max_float(<<>>, Max, _, _, Acc) ->
+    <<Acc/binary, ?FLOAT, Max:?BITS/float>>.
 
 derivate(<<>>) ->
     <<>>;

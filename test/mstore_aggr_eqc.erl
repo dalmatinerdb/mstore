@@ -30,6 +30,16 @@ prop_sum() ->
     ?FORALL({{_, L, B}, N}, {i_or_f_array(), pos_int()},
             sum(L, N) == mstore_bin:to_list(mstore_aggr:sum(B, N))).
 
+%% We need to know about unset values for min!
+prop_min() ->
+    ?FORALL({{L, _, B}, N}, {i_or_f_array(), pos_int()},
+            min_list(L, N) == mstore_bin:to_list(mstore_aggr:min(B, N))).
+
+%% We need to know about unset values for min!
+prop_max() ->
+    ?FORALL({{L, _, B}, N}, {i_or_f_array(), pos_int()},
+            max_list(L, N) == mstore_bin:to_list(mstore_aggr:max(B, N))).
+
 prop_der() ->
     ?FORALL({_, L, B}, i_or_f_array(),
             derivate(L) == mstore_bin:to_list(mstore_aggr:derivate(B))).
@@ -40,14 +50,43 @@ avg(L, N) ->
 sum(L, N) ->
     apply_n(L, N, fun sum_/2).
 
+min_list(L, N) ->
+    apply_n(L, N, fun min_/2).
+
+max_list(L, N) ->
+    apply_n(L, N, fun max_/2).
+
 apply_n(L, N, F) ->
-    [F(SL, N) || SL <- n_length_chunks(L, N)].
+    fix_list([F(SL, N) || SL <- n_length_chunks(L, N)], 0, []).
 
 avg_(L, N) ->
     lists:sum(L) / N.
 
 sum_(L, _N) ->
     lists:sum(L).
+
+min_(L, _N) ->
+    case lists:sort([V || {true, V} <- L]) of
+        [] ->
+            undefined;
+        [S | _ ] ->
+            S
+    end.
+
+max_(L, _N) ->
+    case lists:sort([V || {true, V} <- L]) of
+        [] ->
+            undefined;
+        L1 ->
+            lists:last(L1)
+    end.
+
+fix_list([undefined | T], Last, Acc) ->
+    fix_list(T, Last, [Last | Acc]);
+fix_list([V | T], _, Acc) ->
+    fix_list(T, V, [V | Acc]);
+fix_list([],_,Acc) ->
+    lists:reverse(Acc).
 
 derivate([]) ->
     [];

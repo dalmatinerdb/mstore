@@ -1,5 +1,7 @@
 ## mstore
 
+[<img src="http://quickcheck-ci.com/p/licenser/mstore.png" alt="Build Status" width="160px">](http://quickcheck-ci.com/p/licenser/mstore)
+
 MStore is a experimental metric store build in erlang, the primary functions are `open`, `new`, `get` and `put`.
 
 A datastore is defined by:
