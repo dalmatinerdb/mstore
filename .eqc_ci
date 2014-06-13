@@ -1,4 +1,5 @@
 %-*-Erlang-*-
-{build, "make eqc-ci"}.
+%{build, "make eqc-ci"}.
+{build, "make qc"}.
 {test_path, ".eunit"}.
 {test_root, ".eunit"}.
