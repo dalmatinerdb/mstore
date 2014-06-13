@@ -70,7 +70,7 @@ offset() ->
 
 
 string() ->
-    ?SUCHTHAT(L, list(char()), L =/= "").
+    ?SUCHTHAT(L, list(choose($a, $z)), L =/= "").
 
 unlist([E]) ->
     E.
