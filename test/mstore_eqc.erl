@@ -77,6 +77,7 @@ unlist([E]) ->
 %%%-------------------------------------------------------------------
 %%% Properties
 %%%-------------------------------------------------------------------
+-ifndef(EQC_CI). %% This needs to read and write the FS we disable it for EQC_CI
 prop_read_write() ->
     os:cmd("rm -r " ++ ?DIR),
     ?FORALL({Metric, Size, Time, Data},
@@ -90,8 +91,6 @@ prop_read_write() ->
                 ?S:delete(S2),
                 Res2 == Data andalso
                     Metrics == [Metric]
-                    
-                
             end).
 
 prop_gb_comp() ->
@@ -111,5 +110,5 @@ prop_gb_comp() ->
                             length(List3) == Len
                     end
                     )).
-
+-endif.
 -include("eqc_helper.hrl").
