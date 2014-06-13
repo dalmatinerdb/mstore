@@ -11,7 +11,7 @@ deps:
 	$(REBAR) get-deps
 
 clean:
-	rm -r .eunit
+	-rm -r .eunit
 	$(REBAR) clean
 
 distclean: clean
