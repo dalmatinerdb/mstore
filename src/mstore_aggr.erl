@@ -45,7 +45,7 @@ sum(Data, Count) ->
         float ->
             sum_float(Data, 0.0, 0.0, Count, Count, <<>>);
         undefined ->
-            mstore_bin:empty(mstore_bin:length(Data))
+            mstore_bin:empty(ceiling(mstore_bin:length(Data)/Count))
     end.
 
 sum_float(R, Last, Sum, 0, Count, Acc) ->
@@ -81,7 +81,7 @@ min(Data, Count) ->
         float ->
             min_float(Data, undefined, Count, Count, <<>>);
         undefined ->
-            mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
+            mstore_bin:empty(ceiling(mstore_bin:length(Data)/Count))
     end.
 
 min_int(R, undefined, 0, Count, Acc) ->
@@ -133,7 +133,7 @@ max(Data, Count) ->
         float ->
             max_float(Data, undefined, Count, Count, <<>>);
         undefined ->
-            mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
+            mstore_bin:empty(ceiling(mstore_bin:length(Data)/Count))
     end.
 
 max_int(R, undefined, 0, Count, Acc) ->
@@ -202,7 +202,6 @@ scale_float(<<?NONE, _:?BITS/integer, Rest/binary>>, I, S, Acc) ->
 scale_float(<<>>, _, _, Acc) ->
     Acc.
 
-
 derivate(<<>>) ->
     <<>>;
 
@@ -219,7 +218,7 @@ derivate(<<?NONE, 0:?BITS/signed-integer, Rest/binary>>) ->
         float ->
             der_float(Rest, 0.0, <<>>);
         undefined ->
-            mstore_bin:empty(mstore_bin:length(Rest))
+            mstore_bin:empty(erlang:max(mstore_bin:length(Rest),0))
     end.
 
 der_int(<<?INT, I:?BITS/signed-integer, Rest/binary>>, Last, Acc) ->
@@ -235,3 +234,11 @@ der_float(<<?NONE, 0:?BITS/float, Rest/binary>>, Last, Acc) ->
     der_float(Rest, Last, <<Acc/binary, ?FLOAT, 0:?BITS/float>>);
 der_float(<<>>, _, Acc) ->
     Acc.
+
+ceiling(X) ->
+    T = erlang:trunc(X),
+    case (X - T) of
+        Neg when Neg < 0 -> T;
+        Pos when Pos > 0 -> T + 1;
+        _ -> T
+    end.

@@ -51,9 +51,6 @@ find_type(_) ->
 length(B) ->
     trunc(byte_size(B)/?DATA_SIZE).
 
-empty(0) ->
-    <<>>;
-
 empty(Length) ->
     <<0:((?BITS+8)*Length)/signed-integer>>.
 

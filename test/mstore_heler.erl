@@ -4,10 +4,20 @@
 -include("../include/mstore.hrl").
 
 -export([int_array/0, float_array/0, pos_int/0, non_neg_int/0, i_or_f_list/0,
-         i_or_f_array/0, non_empty_i_or_f_list/0]).
+         i_or_f_array/0, non_empty_i_or_f_list/0, defined_int_array/0,
+         defined_float_array/0, defined_i_or_f_array/0]).
 
 i_or_f_array() ->
     oneof([int_array(), float_array()]).
+
+defined_i_or_f_array() ->
+    oneof([defined_int_array(), defined_float_array()]).
+
+defined_int_array() ->
+    ?SUCHTHAT({R, _, _}, int_array(), [ok || {true, _} <- R] =/= []).
+
+defined_float_array() ->
+    ?SUCHTHAT({R, _, _}, float_array(), [ok || {true, _} <- R] =/= []).
 
 int_array() ->
     ?LET(L, list({frequency([{2, false}, {8, true}]), int()}),
