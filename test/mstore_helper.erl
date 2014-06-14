@@ -1,4 +1,4 @@
--module(mstore_heler).
+-module(mstore_helper).
 
 -include_lib("eqc/include/eqc.hrl").
 -include("../include/mstore.hrl").

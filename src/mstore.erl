@@ -19,7 +19,8 @@
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
 
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, delete/1, close/1, open/1, metrics/1]).
+-export([put/4, get/4, new/3, delete/1, close/1, open/1, metrics/1,
+         serialize/2, serialize_dir/2, serialize_index/2]).
 
 %% @doc Opens an existing mstore.
 
@@ -80,7 +81,10 @@ save_set(#mset{dir=D, size=Size, chash=CHash, seed=Seed,metrics=Metrics}) ->
 
 
 metrics(#mset{metrics=M}) ->
-    gb_sets:to_list(M).
+    gb_sets:to_list(M);
+
+metrics(#mstore{index=M}) ->
+    gb_trees:keys(M).
 
 put(MSet, Metric, Time, [V0 | _] = Values)
   when is_integer(V0) ->
@@ -261,6 +265,21 @@ open(File, Offset, Size, Mode) ->
             end
     end.
 
+open_store(File) ->
+    case file:consult([File | ".idx"]) of
+        {ok, [{Offset, Size, Idx}]} ->
+            case file:open([File | ".mstore"], [read | ?OPTS]) of
+                {ok, F} ->
+                    Tree=gb_trees:from_orddict(Idx),
+                    {ok, #mstore{index=Tree, name=File, file=F, offset=Offset,
+                                 size=Size, next=length(Idx)}};
+                E ->
+                    E
+            end;
+        E ->
+            E
+    end.
+
 write(M=#mstore{offset=Offset, size=S}, Metric, Position, Value)
   when is_binary(Value),
        Position >= Offset,
@@ -296,6 +315,41 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
 
 write_index(#mstore{name=F, index=I, offset=O, size=S}) ->
     file:write_file([F | ".idx"], io_lib:format("~p.", [{O, S, gb_trees:to_list(I)}])).
+
+serialize(#mset{dir=Dir, chash=CHash}, Fun) ->
+    Dirs = [Dir ++ [$/ | integer_to_list(I)] || {I, _} <- chash:nodes(CHash)],
+    [serialize_dir(D, Fun) || D <- Dirs].
+
+serialize_dir(Dir, Fun) ->
+    {ok, Fs} = file:list_dir(Dir),
+    Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
+    [serialize_index([Dir, $/, I], Fun) || [I, "idx"] <- Fs1].
+
+serialize_index(Store, Fun) ->
+    {ok, MStore} = open_store(Store),
+    [serialize_metric(MStore, M, Fun) || M <- metrics(MStore)].
+
+
+serialize_metric(MStore, Metric, Fun) ->
+    #mstore{offset=O,size=S} = MStore,
+    Fun1 = fun(Offset, Data) ->
+                   Fun(Metric, Offset, Data)
+           end,
+    {ok, Data} = read(MStore, Metric, O, S),
+    serialize_binary(Data, Fun1, O, <<>>).
+
+serialize_binary(<<>>, _Fun, _O, <<>>) ->
+    ok;
+serialize_binary(<<>>, Fun, O, Acc) ->
+    Fun(O, Acc);
+serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, O, <<>>) ->
+    serialize_binary(R, Fun, O+1, <<>>);
+serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, O, Acc) ->
+    Fun(O, Acc),
+    serialize_binary(R, Fun, O+mstore_bin:length(Acc)+1, <<>>);
+serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, O, Acc) ->
+    serialize_binary(R, Fun, O, <<Acc/binary, V/binary>>).
+
 
 -ifdef(TEST).
 
