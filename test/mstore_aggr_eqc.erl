@@ -44,6 +44,22 @@ prop_der() ->
     ?FORALL({_, L, B}, i_or_f_array(),
             derivate(L) == mstore_bin:to_list(mstore_aggr:derivate(B))).
 
+prop_scale_int() ->
+    ?FORALL({{R, L, B}, S}, {int_array(), real()},
+            ?IMPLIES([ok || {true, _} <- R] =/= [],
+                     scale_i(L,S) == mstore_bin:to_list(mstore_aggr:scale(B,S)))).
+
+prop_scale_flaot() ->
+    ?FORALL({{R, L, B}, S}, {float_array(), real()},
+            ?IMPLIES([ok || {true, _} <- R] =/= [],
+                     scale_f(L,S) == mstore_bin:to_list(mstore_aggr:scale(B, S)))).
+
+scale_i(L, S) ->
+    [round(N*S) || N <- L].
+
+scale_f(L, S) ->
+    [N*S || N <- L].
+
 avg(L, N) ->
     apply_n(L, N, fun avg_/2).
 

@@ -53,7 +53,6 @@ new(NumFiles, FileSize, Dir) ->
     {ok, MSet} = mstore:new(NumFiles, FileSize, Dir),
     MSet.
 
-
 non_z_int() ->
     ?SUCHTHAT(I, int(), I =/= 0).
 
@@ -123,4 +122,5 @@ prop_gb_comp() ->
                             length(List3) == Len
                     end
                     )).
+
 -include("eqc_helper.hrl").

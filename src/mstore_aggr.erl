@@ -8,7 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(mstore_aggr).
 
--export([sum/2, avg/2, min/2, max/2, derivate/1]).
+-export([sum/2, avg/2, min/2, max/2, scale/2, derivate/1]).
 -include("mstore.hrl").
 
 
@@ -45,7 +45,7 @@ sum(Data, Count) ->
         float ->
             sum_float(Data, 0.0, 0.0, Count, Count, <<>>);
         undefined ->
-            mstore_bin:empty(erlang:max(round(byte_size(Data)/?DATA_SIZE/Count), 1))
+            mstore_bin:empty(mstore_bin:length(Data))
     end.
 
 sum_float(R, Last, Sum, 0, Count, Acc) ->
@@ -176,6 +176,33 @@ max_float(<<>>, undefined, _, _, Acc) ->
 max_float(<<>>, Max, _, _, Acc) ->
     <<Acc/binary, ?FLOAT, Max:?BITS/float>>.
 
+scale(<<>>, _) ->
+    <<>>;
+scale(Bin, Scale) ->
+    case mstore_bin:find_type(Bin) of
+        integer ->
+            scale_int(Bin, 0, Scale, <<>>);
+        float ->
+            scale_float(Bin, 0, Scale, <<>>);
+        undefined ->
+            mstore_bin:empty(mstore_bin:length(Bin))
+    end.
+
+scale_int(<<?INT, I:?BITS/signed-integer, Rest/binary>>, _, S, Acc) ->
+    scale_int(Rest, I, S, <<Acc/binary, ?INT, (round(I*S)):?BITS/signed-integer>>);
+scale_int(<<?NONE, _:?BITS/integer, Rest/binary>>, I, S, Acc) ->
+    scale_int(Rest, I, S, <<Acc/binary, ?INT, (round(I*S)):?BITS/signed-integer>>);
+scale_int(<<>>, _, _, Acc) ->
+    Acc.
+
+scale_float(<<?FLOAT, I:?BITS/float, Rest/binary>>, _, S, Acc) ->
+    scale_float(Rest, I, S, <<Acc/binary, ?FLOAT, (I*S):?BITS/float>>);
+scale_float(<<?NONE, _:?BITS/integer, Rest/binary>>, I, S, Acc) ->
+    scale_float(Rest, I, S, <<Acc/binary, ?FLOAT, (I*S):?BITS/float>>);
+scale_float(<<>>, _, _, Acc) ->
+    Acc.
+
+
 derivate(<<>>) ->
     <<>>;
 
@@ -192,7 +219,7 @@ derivate(<<?NONE, 0:?BITS/signed-integer, Rest/binary>>) ->
         float ->
             der_float(Rest, 0.0, <<>>);
         undefined ->
-            mstore_bin:empty(round(byte_size(Rest)/?DATA_SIZE))
+            mstore_bin:empty(mstore_bin:length(Rest))
     end.
 
 der_int(<<?INT, I:?BITS/signed-integer, Rest/binary>>, Last, Acc) ->
