@@ -40,14 +40,6 @@ size() ->
 offset() ->
     choose(0, 5000).
 
-list_serializer(L) ->
-    receive
-        {From, Ref, get} ->
-            From ! {Ref, L};
-        X ->
-            list_serializer([X | L])
-    end.
-
 mset_serializer(S) ->
     receive
         {From, Ref, get} ->
@@ -58,7 +50,7 @@ mset_serializer(S) ->
             mset_serializer(S1)
     end.
 
-prop_serializer_fully() ->
+prop_fold_fully() ->
     ?FORALL({NumFiles, FileSize}, {chash_size(), size()},
             ?FORALL(D, store(NumFiles, FileSize),
                     begin
@@ -66,17 +58,15 @@ prop_serializer_fully() ->
                         os:cmd("rm -r " ++ ?DIR),
                         Original = eval(D),
                         Copy = new(NumFiles, FileSize, ?DIR ++"-copy"),
-                        OriginalListSer = spawn(?MODULE, list_serializer, [[]]),
-                        CopyListSer = spawn(?MODULE, list_serializer, [[]]),
                         OriginalSetSer = spawn(?MODULE, mset_serializer, [Copy]),
-                        SerializeOrig = fun(M, T, V) ->
-                                            OriginalListSer ! {M, T, V},
-                                            OriginalSetSer ! {put, M, T, V}
-                                    end,
-                        SerializeCopy = fun(M, T, V) ->
-                                                CopyListSer ! {M, T, V}
+                        SerializeOrig = fun(M, T, V, Acc) ->
+                                                OriginalSetSer ! {put, M, T, V},
+                                                [{M, T, V} | Acc]
                                         end,
-                        ?S:serialize(Original, SerializeOrig),
+                        SerializeCopy = fun(M, T, V, Acc) ->
+                                                [{M, T, V} | Acc]
+                                        end,
+                        L1 = ?S:fold(Original, SerializeOrig, []),
                         R0 = make_ref(),
                         OriginalSetSer ! {self(), R0, get},
                         C1 = receive
@@ -85,23 +75,7 @@ prop_serializer_fully() ->
                              after 1000 ->
                                      error
                              end,
-                        ?S:serialize(C1, SerializeCopy),
-                        R1 = make_ref(),
-                        OriginalListSer ! {self(), R1, get},
-                        L1 = receive
-                                 {R1, Lo} ->
-                                     Lo
-                             after 1000 ->
-                                     []
-                             end,
-                        R2 = make_ref(),
-                        CopyListSer ! {self(), R2, get},
-                        L2 = receive
-                                 {R2, Lc} ->
-                                     Lc
-                             after 1000 ->
-                                     []
-                             end,
+                        L2 = ?S:fold(C1, SerializeCopy, []),
                         lists:sort(L1) == lists:sort(L2)
                     end)).
 

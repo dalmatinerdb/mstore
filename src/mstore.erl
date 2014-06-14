@@ -20,7 +20,7 @@
 
 -define(OPTS, [raw, binary]).
 -export([put/4, get/4, new/3, delete/1, close/1, open/1, metrics/1,
-         serialize/2, serialize_dir/2, serialize_index/2]).
+         fold/3]).
 
 %% @doc Opens an existing mstore.
 
@@ -316,39 +316,46 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
 write_index(#mstore{name=F, index=I, offset=O, size=S}) ->
     file:write_file([F | ".idx"], io_lib:format("~p.", [{O, S, gb_trees:to_list(I)}])).
 
-serialize(#mset{dir=Dir, chash=CHash}, Fun) ->
+fold(#mset{dir=Dir, chash=CHash}, Fun, Acc) ->
     Dirs = [Dir ++ [$/ | integer_to_list(I)] || {I, _} <- chash:nodes(CHash)],
-    [serialize_dir(D, Fun) || D <- Dirs].
+    lists:foldl(fun(D, AccIn) ->
+                        serialize_dir(D, Fun, AccIn)
+                end, Acc, Dirs).
 
-serialize_dir(Dir, Fun) ->
+serialize_dir(Dir, Fun, Acc) ->
     {ok, Fs} = file:list_dir(Dir),
     Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
-    [serialize_index([Dir, $/, I], Fun) || [I, "idx"] <- Fs1].
+    Idxs = [I || [I, "idx"] <- Fs1],
+    lists:foldl(fun(I, AccIn) ->
+                        serialize_index([Dir, $/, I], Fun, AccIn)
+                end, Acc, Idxs).
 
-serialize_index(Store, Fun) ->
+serialize_index(Store, Fun, Acc) ->
     {ok, MStore} = open_store(Store),
-    [serialize_metric(MStore, M, Fun) || M <- metrics(MStore)].
+    lists:foldl(fun(M, AccIn) ->
+                        serialize_metric(MStore, M, Fun, AccIn)
+                end, Acc, metrics(MStore)).
 
 
-serialize_metric(MStore, Metric, Fun) ->
+serialize_metric(MStore, Metric, Fun, Acc) ->
     #mstore{offset=O,size=S} = MStore,
-    Fun1 = fun(Offset, Data) ->
-                   Fun(Metric, Offset, Data)
+    Fun1 = fun(Offset, Data, AccIn) ->
+                   Fun(Metric, Offset, Data, AccIn)
            end,
     {ok, Data} = read(MStore, Metric, O, S),
-    serialize_binary(Data, Fun1, O, <<>>).
+    serialize_binary(Data, Fun1, Acc, O, <<>>).
 
-serialize_binary(<<>>, _Fun, _O, <<>>) ->
-    ok;
-serialize_binary(<<>>, Fun, O, Acc) ->
-    Fun(O, Acc);
-serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, O, <<>>) ->
-    serialize_binary(R, Fun, O+1, <<>>);
-serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, O, Acc) ->
-    Fun(O, Acc),
-    serialize_binary(R, Fun, O+mstore_bin:length(Acc)+1, <<>>);
-serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, O, Acc) ->
-    serialize_binary(R, Fun, O, <<Acc/binary, V/binary>>).
+serialize_binary(<<>>, _Fun, FunAcc, _O, <<>>) ->
+    FunAcc;
+serialize_binary(<<>>, Fun, FunAcc, O, Acc) ->
+    Fun(O, Acc, FunAcc);
+serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, <<>>) ->
+    serialize_binary(R, Fun, FunAcc, O+1, <<>>);
+serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, Acc) ->
+    FunAcc1 = Fun(O, Acc, FunAcc),
+    serialize_binary(R, Fun, FunAcc1, O+mstore_bin:length(Acc)+1, <<>>);
+serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, FunAcc, O, Acc) ->
+    serialize_binary(R, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
 
 
 -ifdef(TEST).
