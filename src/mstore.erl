@@ -185,21 +185,21 @@ do_get(S, Dir, Metric, [{Time, Count} | R], Acc) ->
         {ok, D} ->
             close(F),
             Acc1 = <<Acc/binary, D/binary>>,
-            Acc2 = case mstore_bin:length(D) of
+            Acc2 = case mmath_bin:length(D) of
                        L when L < Count ->
                            Missing = Count - L,
-                           <<Acc1/binary, (mstore_bin:empty(Missing))/binary>>;
+                           <<Acc1/binary, (mmath_bin:empty(Missing))/binary>>;
                        _ ->
                            Acc1
                    end,
             do_get(S, Dir, Metric, R, Acc2);
         {error,not_found} ->
             close(F),
-            Acc1 = <<Acc/binary, (mstore_bin:empty(Count))/binary>>,
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, Dir, Metric, R, Acc1);
         eof ->
             close(F),
-            Acc1 = <<Acc/binary, (mstore_bin:empty(Count))/binary>>,
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, Dir, Metric, R, Acc1);
         E ->
             close(F),
@@ -353,7 +353,7 @@ serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, <<>>) ->
     serialize_binary(R, Fun, FunAcc, O+1, <<>>);
 serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, Acc) ->
     FunAcc1 = Fun(O, Acc, FunAcc),
-    serialize_binary(R, Fun, FunAcc1, O+mstore_bin:length(Acc)+1, <<>>);
+    serialize_binary(R, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
 serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, FunAcc, O, Acc) ->
     serialize_binary(R, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
 
@@ -399,7 +399,7 @@ bench_test_() ->
              ?debugFmt("Read ~p metrics in ~p seconds meaning ~p metrics/second.",
                        [NumPoints, Seconds1, NumPoints/Seconds1]),
              {T2, L} = timer:tc(fun() ->
-                                        mstore_bin:to_list(R)
+                                        mmath_bin:to_list(R)
                                 end),
              Seconds2 = T2 / 1000000,
              ?debugFmt("Converted ~p metrics in ~p seconds meaning ~p metrics/second.",

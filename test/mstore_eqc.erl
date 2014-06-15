@@ -81,7 +81,7 @@ prop_read_write() ->
                 {ok, S1} = ?S:new(2, Size, ?DIR),
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
-                Res2 = mstore_bin:to_list(Res1),
+                Res2 = mmath_bin:to_list(Res1),
                 Metrics = gb_sets:to_list(?S:metrics(S2)),
                 ?S:delete(S2),
                 Res2 == Data andalso
@@ -101,7 +101,7 @@ prop_read_len() ->
                          ReadTime = Time + TimeOffset,
                          {ok, Read} = ?S:get(S2, Metric, ReadTime, ReadLen),
                          ?S:delete(S2),
-                         mstore_bin:length(Read) == ReadLen
+                         mmath_bin:length(Read) == ReadLen
                      end)).
 
 prop_gb_comp() ->
@@ -113,7 +113,7 @@ prop_gb_comp() ->
                         List = ?G:to_list(T),
                         List1 = [{?S:get(S, ?M, Time, 1), V} || {Time, V} <- List],
                         ?S:delete(S),
-                        List2 = [{unlist(mstore_bin:to_list(Vs)), Vt} || {{ok, Vs}, Vt} <- List1],
+                        List2 = [{unlist(mmath_bin:to_list(Vs)), Vt} || {{ok, Vs}, Vt} <- List1],
                         List3 = [true || {_V, _V} <- List2],
                         Len = length(List),
                         length(List1) == Len andalso
