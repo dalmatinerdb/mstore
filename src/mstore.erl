@@ -81,7 +81,7 @@ save_set(#mset{dir=D, size=Size, chash=CHash, seed=Seed,metrics=Metrics}) ->
 
 
 metrics(#mset{metrics=M}) ->
-    gb_sets:to_list(M);
+    M;
 
 metrics(#mstore{index=M}) ->
     gb_trees:keys(M).

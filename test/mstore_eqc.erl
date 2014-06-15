@@ -82,7 +82,7 @@ prop_read_write() ->
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
                 Res2 = mstore_bin:to_list(Res1),
-                Metrics = ?S:metrics(S2),
+                Metrics = gb_sets:to_list(?S:metrics(S2)),
                 ?S:delete(S2),
                 Res2 == Data andalso
                     Metrics == [Metric]
