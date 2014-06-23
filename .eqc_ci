@@ -1,3 +1,4 @@
 %-*-Erlang-*-
 {build, "make eqc-compile"}.
 {test_path, "ebin"}.
+{deps, "deps/chash/ebin"}.
