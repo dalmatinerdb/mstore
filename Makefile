@@ -20,8 +20,10 @@ distclean: clean
 qc: clean all
 	$(REBAR) -C rebar_eqc.config compile eunit skip_deps=true --verbose
 
-eqc-ci: clean all
-	$(REBAR) -D EQC_CI -C rebar_eqc_ci.config compile eunit skip_deps=true --verbose
+eqc-compile: deps compile
+        mkdir ebin
+        (cd test; erl -noshell -DEQC -DTEST -eval 'make:all([{parse_transform, eqc_cover}, {outdir, "../ebin"}])' -s init stop)
+        (cd src; erl -noshell -DEQC -DTEST -eval 'make:all([{parse_transform, eqc_cover}, {i, "../include"}, {outdir, "../ebin"}])' -s init stop)
 
 test: all
 	-rm -r .eunit
