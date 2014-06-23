@@ -14,9 +14,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 -endif.
--ifdef(EQC).
--compile(export_all).
--endif.
 
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
