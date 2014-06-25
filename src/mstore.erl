@@ -172,12 +172,63 @@ get(#mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Count) ->
     <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
     Idx = chash:next_index(IndexAsInt, CHash),
     Dir = [D, "/", integer_to_list(Idx)],
-    do_get(S, Dir, Metric, Parts, <<>>).
+    FS = chash:lookup(Idx, CHash),
+    do_get(S, FS, Dir, Metric, Parts, <<>>).
 
-do_get(_, _, _, [], Acc) ->
+do_get(_, _, _, _, [], Acc) ->
     {ok, Acc};
 
-do_get(S, Dir, Metric, [{Time, Count} | R], Acc) ->
+
+do_get(S, [{FileBase, F} | _] = FS,
+       Dir, Metric, [{Time, Count} | R], Acc)
+  when ((Time div S)*S) =:= FileBase ->
+    case read(F, Metric, Time, Count) of
+        {ok, D} ->
+            Acc1 = <<Acc/binary, D/binary>>,
+            Acc2 = case mmath_bin:length(D) of
+                       L when L < Count ->
+                           Missing = Count - L,
+                           <<Acc1/binary, (mmath_bin:empty(Missing))/binary>>;
+                       _ ->
+                           Acc1
+                   end,
+            do_get(S, FS, Dir, Metric, R, Acc2);
+        {error,not_found} ->
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
+            do_get(S, FS, Dir, Metric, R, Acc1);
+        eof ->
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
+            do_get(S, FS, Dir, Metric, R, Acc1);
+        E ->
+            E
+    end;
+do_get(S,
+       [_, {FileBase, F}] = FS,
+       Dir, Metric, [{Time, Count} | R], Acc)
+  when ((Time div S)*S) =:= FileBase ->
+    case read(F, Metric, Time, Count) of
+        {ok, D} ->
+            Acc1 = <<Acc/binary, D/binary>>,
+            Acc2 = case mmath_bin:length(D) of
+                       L when L < Count ->
+                           Missing = Count - L,
+                           <<Acc1/binary, (mmath_bin:empty(Missing))/binary>>;
+                       _ ->
+                           Acc1
+                   end,
+            do_get(S, FS, Dir, Metric, R, Acc2);
+        {error,not_found} ->
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
+            do_get(S, FS, Dir, Metric, R, Acc1);
+        eof ->
+            Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
+            do_get(S, FS, Dir, Metric, R, Acc1);
+        E ->
+            E
+    end;
+
+
+do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
     Base = [Dir, "/", integer_to_list(FileBase)],
     {ok, F} = open(Base, FileBase, S, read),
@@ -192,15 +243,15 @@ do_get(S, Dir, Metric, [{Time, Count} | R], Acc) ->
                        _ ->
                            Acc1
                    end,
-            do_get(S, Dir, Metric, R, Acc2);
+            do_get(S, FS, Dir, Metric, R, Acc2);
         {error,not_found} ->
             close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1);
         eof ->
             close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1);
         E ->
             close(F),
             E
