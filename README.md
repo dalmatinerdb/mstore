@@ -13,7 +13,6 @@ For each chunk a index is created (defining the position of the metrics) and a d
 
 For a store holding 1000 metrics writing to the the numbers 0-999 would be in the file 0, 1000-1999 would be in the second file etc.
 
-
 ## Idea
 
 The basic idea is to take advantage of the special characteristics metrics have and modern filesystems. The following assumptions about metrics and filesystems are taken:
