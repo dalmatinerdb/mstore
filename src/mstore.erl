@@ -15,6 +15,30 @@
 -compile(export_all).
 -endif.
 
+
+-define(DT_MSTORE, 4401).
+
+-define(DT_ENTRY, 1).
+-define(DT_RETURN, 2).
+
+-define(DT_READ, 1).
+-define(DT_WRITE, 2).
+
+-define(DT_READ_ENTRY(Metric, Time, Size),
+        dyntrace:p(?DT_MSTORE, ?DT_READ, ?DT_ENTRY, Metric, Time, Size)).
+
+-define(DT_READ_RETURN,
+        dyntrace:p(?DT_MSTORE, ?DT_READ, ?DT_RETURN)).
+
+-define(DT_WRITE_ENTRY(Metric, Time, Size),
+        dyntrace:p(?DT_MSTORE, ?DT_WRITE, ?DT_ENTRY, Metric, Time, Size)).
+
+-define(DT_WRITE_RETURN,
+        dyntrace:p(?DT_MSTORE, ?DT_WRITE, ?DT_RETURN)).
+
+
+
+
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
 -record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
 
@@ -98,6 +122,7 @@ put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
     Metric, Time, Value)
   when is_binary(Value)
        ->
+    ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
     <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
     Idx = chash:next_index(IndexAsInt, CHash),
     Count = byte_size(Value) / ?DATA_SIZE,
@@ -114,9 +139,11 @@ put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
             end,
     case do_put(MSet1#mset{dir=[D, $/, integer_to_list(Idx)]}, Metric, Parts1, Value, CurFiles) of
         CurFiles1 when CurFiles1 =:= CurFiles ->
+            ?DT_WRITE_RETURN,
             MSet1;
         CurFiles1 ->
             CHash1 = chash:update(Idx, CurFiles1, CHash),
+            ?DT_WRITE_RETURN,
             MSet1#mset{chash = CHash1}
     end;
 
@@ -168,12 +195,15 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     do_put(MSet, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
 get(#mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Count) ->
+    ?DT_READ_ENTRY(Metric, Time, Count),
     Parts = make_splits(Time, Count, S, []),
     <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
     Idx = chash:next_index(IndexAsInt, CHash),
     Dir = [D, "/", integer_to_list(Idx)],
     FS = chash:lookup(Idx, CHash),
-    do_get(S, FS, Dir, Metric, Parts, <<>>).
+    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
+    ?DT_READ_RETURN,
+    R.
 
 do_get(_, _, _, _, [], Acc) ->
     {ok, Acc};
