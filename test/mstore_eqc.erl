@@ -15,7 +15,7 @@
 
 -define(S, mstore).
 -define(G, gb_trees).
--define(M, "metric").
+-define(M, <<"metric">>).
 -define(DIR, ".qcdata").
 
 store(Buckets, FileSize) ->
@@ -66,7 +66,7 @@ offset() ->
     choose(0, 5000).
 
 string() ->
-    ?SUCHTHAT(L, list(choose($a, $z)), L =/= "").
+    ?LET(S, ?SUCHTHAT(L, list(choose($a, $z)), L =/= ""), list_to_binary(S)).
 
 unlist([E]) ->
     E.

@@ -30,13 +30,14 @@ non_z_int() ->
     ?SUCHTHAT(I, int(), I =/= 0).
 
 metric_name() ->
-    ?SUCHTHAT(L, list(choose($a, $z)), L =/= "").
+    ?LET(S, ?SUCHTHAT(L, list(choose($a, $z)), L =/= ""), list_to_binary(S)).
 
 chash_size() ->
     ?LET(N, choose(1, 5), trunc(math:pow(2, N))).
 
 size() ->
     choose(1000,2000).
+
 offset() ->
     choose(0, 5000).
 
@@ -49,7 +50,6 @@ mset_serializer(S) ->
             S1 = ?S:put(S, M, T, V),
             mset_serializer(S1)
     end.
-
 prop_fold_fully() ->
     ?FORALL({NumFiles, FileSize}, {chash_size(), size()},
             ?FORALL(D, store(NumFiles, FileSize),
