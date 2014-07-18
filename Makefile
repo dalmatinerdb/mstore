@@ -24,6 +24,7 @@ eqc-compile: deps compile
 	rm ebin/*
 	(cd test; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {outdir, \"../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
 	(cd src; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {i, \"../include\"}, {outdir, \"../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
+	(cd deps/chash/src; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {outdir, \"../../../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
 
 test: all
 	-rm -r .eunit
