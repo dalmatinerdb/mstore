@@ -18,46 +18,45 @@
 -define(M, <<"metric">>).
 -define(DIR, ".qcdata").
 
-store(Buckets, FileSize) ->
-    ?SIZED(Size,store(Buckets, FileSize, Size)).
+store(FileSize) ->
+    ?SIZED(Size, store(FileSize, Size)).
 
-insert(Buckets, FileSize, Size) ->
+insert(FileSize, Size) ->
     ?LAZY(?LET({{S, T}, M, O, V},
-               {store(Buckets, FileSize, Size-1), ?M, offset(), non_z_int()},
+               {store(FileSize, Size-1), ?M, offset(), non_z_int()},
                {{call, ?S, put, [S, M, O, V]},
                 {call, ?G, enter, [O, V, T]}})).
 
-reopen(Buckets, FileSize, Size) ->
+reopen(FileSize, Size) ->
     ?LAZY(?LET({S, T},
-               store(Buckets, FileSize, Size-1),
+               store(FileSize, Size-1),
                {oneof(
-                  [{call,?MODULE,renew, [S,Buckets, FileSize, ?DIR]},
-                   {call,?MODULE,reopen, [S,?DIR]}]), T})).
+                  [{call,?MODULE, renew, [S, FileSize, ?DIR]},
+                   {call,?MODULE, do_reopen, [S, ?DIR]}]), T})).
 
-store(Buckets, FileSize, Size) ->
-    ?LAZY(oneof([{{call,?MODULE,new, [Buckets, FileSize, ?DIR]}, {call, ?G, empty, []}}]
-                ++ [frequency(
-                      [{9, insert(Buckets, FileSize, Size)},
-                       {1, reopen(Buckets, FileSize, Size)}]) || Size > 0])).
+store(FileSize, Size) ->
+    ?LAZY(oneof(
+            [{{call, ?MODULE, new, [FileSize, ?DIR]}, {call, ?G, empty, []}}
+             || Size == 0]
+            ++ [frequency(
+                  [{9, insert(FileSize, Size)},
+                   {1, reopen(FileSize, Size)}]) || Size > 0])).
 
-reopen(Old, Dir) ->
+do_reopen(Old, Dir) ->
     ok = mstore:close(Old),
     {ok, MSet} = mstore:open(Dir),
     MSet.
 
-renew(Old, NumFiles, FileSize, Dir) ->
+renew(Old, FileSize, Dir) ->
     ok = mstore:close(Old),
-    new(NumFiles, FileSize, Dir).
+    new(FileSize, Dir).
 
-new(NumFiles, FileSize, Dir) ->
-    {ok, MSet} = mstore:new(NumFiles, FileSize, Dir),
+new(FileSize, Dir) ->
+    {ok, MSet} = mstore:new(FileSize, Dir),
     MSet.
 
 non_z_int() ->
     ?SUCHTHAT(I, int(), I =/= 0).
-
-chash_size() ->
-    ?LET(N, choose(1, 5), trunc(math:pow(2, N))).
 
 size() ->
     choose(1000,2000).
@@ -78,7 +77,7 @@ prop_read_write() ->
             {string(), size(), offset(), non_empty_i_or_f_list()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
-                {ok, S1} = ?S:new(2, Size, ?DIR),
+                {ok, S1} = ?S:new(Size, ?DIR),
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
                 Res2 = mmath_bin:to_list(Res1),
@@ -95,7 +94,7 @@ prop_read_len() ->
                      (length(Data) + LengthOffset) > 0,
                      begin
                          os:cmd("rm -r " ++ ?DIR),
-                         {ok, S1} = ?S:new(2, Size, ?DIR),
+                         {ok, S1} = ?S:new(Size, ?DIR),
                          S2 = ?S:put(S1, Metric, Time, Data),
                          ReadLen = length(Data) + LengthOffset,
                          ReadTime = Time + TimeOffset,
@@ -105,8 +104,8 @@ prop_read_len() ->
                      end)).
 
 prop_gb_comp() ->
-    ?FORALL({Buckets, FileSize}, {chash_size(), size()},
-            ?FORALL(D, store(Buckets, FileSize),
+    ?FORALL(FileSize, size(),
+            ?FORALL(D, store(FileSize),
                     begin
                         os:cmd("rm -r " ++ ?DIR),
                         {S, T} = eval(D),

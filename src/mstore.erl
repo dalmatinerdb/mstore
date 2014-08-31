@@ -15,47 +15,17 @@
 -compile(export_all).
 -endif.
 
-
--define(DT_MSTORE_READ_ENTRY, 4401).
--define(DT_MSTORE_READ_RETURN, 4402).
--define(DT_MSTORE_WRITE_ENTRY, 4411).
--define(DT_MSTORE_WRITE_RETURN, 4412).
-
--define(DT_ENTRY, 1).
--define(DT_RETURN, 2).
-
--define(DT_READ, 1).
--define(DT_WRITE, 2).
-
--define(DT_READ_ENTRY(Metric, Time, Size),
-        dyntrace:p(?DT_MSTORE_READ_ENTRY, Time, Size, Metric)).
-
--define(DT_READ_RETURN,
-        dyntrace:p(?DT_MSTORE_READ_RETURN)).
-
--define(DT_WRITE_ENTRY(Metric, Time, Size),
-        dyntrace:p(?DT_MSTORE_WRITE_ENTRY, Time, Size, Metric)).
-
--define(DT_WRITE_RETURN,
-        dyntrace:p(?DT_MSTORE_WRITE_RETURN)).
-
 -record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
--record(mset, {size, chash, dir, seed, metrics=gb_sets:new()}).
+-record(mset, {size, files=[], dir, metrics=gb_sets:new()}).
 
 -define(OPTS, [raw, binary]).
--export([put/4, get/4, new/3, delete/1, close/1, open/1, metrics/1,
+-export([put/4, get/4, new/2, delete/1, close/1, open/1, metrics/1,
          fold/3]).
 
 %% @doc Opens an existing mstore.
 
-delete(MSet = #mset{dir=Dir, chash=CHash}) ->
+delete(MSet = #mset{dir=Dir}) ->
     close(MSet),
-    Buckets = [[Dir, $/ | integer_to_list(I)] || {I, _} <- chash:nodes(CHash)],
-    [delete_chash_bucket(Bucket) || Bucket <- Buckets],
-    file:delete([Dir, $/ | "mstore"]),
-    file:del_dir(Dir).
-
-delete_chash_bucket(Dir) ->
     {ok, Files} = file:list_dir(Dir),
     Files1 = [[Dir, $/ | File] || File <- Files],
     [file:delete(F) || F <- Files1],
@@ -65,59 +35,55 @@ delete_chash_bucket(Dir) ->
 
 open(Dir) ->
     case open_mstore([Dir | "/mstore"]) of
-        {FileSize, NumFiles, Seed, Metrics} ->
-            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir,
-                       seed=Seed, metrics=Metrics}};
+        {ok, FileSize, Metrics} ->
+            {ok, #mset{size=FileSize, dir=Dir, metrics=Metrics}};
         _ ->
             {error, not_found}
     end.
 
-new(NumFiles, FileSize, Dir) when is_binary(Dir) ->
-    new(NumFiles, FileSize, binary_to_list(Dir));
+new(FileSize, Dir) when is_binary(Dir) ->
+    new(FileSize, binary_to_list(Dir));
 
-new(NumFiles, FileSize, Dir) ->
+new(FileSize, Dir) ->
     IdxFile = [Dir | "/mstore"],
     case open_mstore(IdxFile) of
-        {F, _N, _Seed, _Metrics} when F =/= FileSize ->
+        {ok, F, _Metrics} when F =/= FileSize ->
             {error, filesize_missmatch};
-        {_F, N, _Seed, _Metrics} when N =/= NumFiles ->
-            {error, ring_size_missmatch};
-        {F, N, Seed, Metrics} when F =:= FileSize,
-                                   N =:= NumFiles ->
-            {ok, #mset{size=FileSize, chash=chash:fresh(NumFiles, []), dir=Dir,
-                       seed=Seed, metrics=Metrics}};
-        {ok, I} ->
-            {error, {bad_index, I}};
+        {ok, F, Metrics} when F =:= FileSize ->
+            {ok, #mset{size=FileSize, dir=Dir, metrics=Metrics}};
         _ ->
-            Seed = erlang:phash2(now()),
             file:make_dir(Dir),
-            CHash = {_, Idxs} = chash:fresh(NumFiles, []),
-            MSet = #mset{size=FileSize, chash=CHash, dir=Dir, seed=Seed},
-            file:write_file(IdxFile,
-                            <<FileSize:64/integer, NumFiles:64/integer, Seed:64/integer>>),
-            [file:make_dir([Dir, $/ | integer_to_list(I)]) || {I, _} <- Idxs],
+            MSet = #mset{size=FileSize, dir=Dir},
+            file:write_file(IdxFile, <<FileSize:64/integer>>),
             {ok, MSet}
     end.
 
 open_mstore(F) ->
     case file:read_file(F) of
-        {ok, <<Size:64/integer, NumFiles:64/integer, Seed:64/integer, R/binary>>} ->
-            {Size, NumFiles, Seed, metrics_to_set(R, gb_sets:new())};
+        {ok, <<Size:64/integer, R/binary>>} ->
+            {ok, Size, metrics_to_set(R, gb_sets:new())};
         E ->
             E
     end.
 
 metrics_to_set(<<_L:16/integer, M:_L/binary, R/binary>>, S) ->
     metrics_to_set(R, gb_sets:add(M, S));
+
 metrics_to_set(<<>>, S) ->
     S.
-
 
 metrics(#mset{metrics=M}) ->
     M;
 
 metrics(#mstore{index=M}) ->
     gb_trees:keys(M).
+
+get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) ->
+    ?DT_READ_ENTRY(Metric, Time, Count),
+    Parts = make_splits(Time, Count, S, []),
+    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
+    ?DT_READ_RETURN,
+    R.
 
 put(MSet, Metric, Time, [V0 | _] = Values)
   when is_integer(V0) ->
@@ -127,16 +93,12 @@ put(MSet, Metric, Time, [V0 | _] = Values)
   when is_float(V0) ->
     put(MSet, Metric, Time, << <<?FLOAT, V:?BITS/float>> || V <- Values >>);
 
-put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
+put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
     Metric, Time, Value)
-  when is_binary(Value)
-       ->
+  when is_binary(Value) ->
     ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
-    <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
-    Idx = chash:next_index(IndexAsInt, CHash),
     Count = byte_size(Value) / ?DATA_SIZE,
     Parts = make_splits(Time, Count, S, []),
-    CurFiles = chash:lookup(Idx, CHash),
     Parts1 = [{B, round(C*?DATA_SIZE)} || {B, C} <- Parts],
     MSet1 = case gb_sets:is_element(Metric, Ms) of
                 true ->
@@ -148,15 +110,9 @@ put(MSet = #mset{size=S, chash=CHash, seed=Seed, dir=D, metrics=Ms},
                                     [read, append]),
                     MSetx
             end,
-    case do_put(MSet1#mset{dir=[D, $/, integer_to_list(Idx)]}, Metric, Parts1, Value, CurFiles) of
-        CurFiles1 when CurFiles1 =:= CurFiles ->
-            ?DT_WRITE_RETURN,
-            MSet1;
-        CurFiles1 ->
-            CHash1 = chash:update(Idx, CurFiles1, CHash),
-            ?DT_WRITE_RETURN,
-            MSet1#mset{chash = CHash1}
-    end;
+    CurFiles1 = do_put(MSet1, Metric, Parts1, Value, CurFiles),
+    ?DT_WRITE_RETURN,
+    MSet1#mset{files = CurFiles1};
 
 put(MSet, Metric, Time, V) when is_integer(V) ->
     put(MSet, Metric, Time, <<?INT, V:?BITS/integer>>);
@@ -204,17 +160,6 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     {ok, F2} = write(F1, Metric, Time, Data),
     do_put(MSet, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
-get(#mset{size=S, chash=CHash, dir=D, seed=Seed}, Metric, Time, Count) ->
-    ?DT_READ_ENTRY(Metric, Time, Count),
-    Parts = make_splits(Time, Count, S, []),
-    <<IndexAsInt:160/integer>> = chash:key_of({Seed, Metric}),
-    Idx = chash:next_index(IndexAsInt, CHash),
-    Dir = [D, "/", integer_to_list(Idx)],
-    FS = chash:lookup(Idx, CHash),
-    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
-    ?DT_READ_RETURN,
-    R.
-
 do_get(_, _, _, _, [], Acc) ->
     {ok, Acc};
 
@@ -242,6 +187,7 @@ do_get(S, [{FileBase, F} | _] = FS,
         E ->
             E
     end;
+
 do_get(S,
        [_, {FileBase, F}] = FS,
        Dir, Metric, [{Time, Count} | R], Acc)
@@ -266,7 +212,6 @@ do_get(S,
         E ->
             E
     end;
-
 
 do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
@@ -311,12 +256,10 @@ make_splits(Time, Count, Size, Acc) ->
     end.
 
 
-close(#mset{chash=CHash}) ->
-    Nodes = chash:nodes(CHash),
-    Stores = lists:flatten([V || {_K, V} <- Nodes]),
-    Stores1 = [V || {_K, V} <- Stores],
-    [close(S) || S <- Stores1],
+close(#mset{files=Files}) ->
+    [close(S) || {_, S} <- Files],
     ok;
+
 close(#mstore{file=F}) ->
     file:close(F).
 
@@ -404,11 +347,8 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             file:pread(F, P, Count*?DATA_SIZE)
     end.
 
-fold(#mset{dir=Dir, chash=CHash}, Fun, Acc) ->
-    Dirs = [Dir ++ [$/ | integer_to_list(I)] || {I, _} <- chash:nodes(CHash)],
-    lists:foldl(fun(D, AccIn) ->
-                        serialize_dir(D, Fun, AccIn)
-                end, Acc, Dirs).
+fold(#mset{dir=Dir}, Fun, Acc) ->
+    serialize_dir(Dir, Fun, Acc).
 
 serialize_dir(Dir, Fun, Acc) ->
     {ok, Fs} = file:list_dir(Dir),
@@ -445,7 +385,6 @@ serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, Acc) ->
 serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, FunAcc, O, Acc) ->
     serialize_binary(R, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
 
-
 read_idx(F) ->
     case file:read_file(F) of
         {ok, <<Offset:64/integer, Size:64/integer, R/binary>>} ->
@@ -458,8 +397,6 @@ read_idx_entreis(<<_L:16/integer, M:_L/binary, R/binary>>, T, I) ->
     read_idx_entreis(R, gb_trees:insert(M, I, T), I+1);
 read_idx_entreis(<<>>, T, _) ->
     T.
-
-
 
 -ifdef(TEST).
 
@@ -527,4 +464,3 @@ add_points(S, Metrics, Size, T, Ps) ->
 -endif.
 
 -endif.
-

@@ -15,15 +15,15 @@
 -define(M, "metric").
 -define(DIR, ".qcdata").
 
-store(Buckets, FileSize) ->
-    ?SIZED(Size,store(Buckets, FileSize, Size)).
+store(FileSize) ->
+    ?SIZED(Size, store(FileSize, Size)).
 
-store(Buckets, FileSize, Size) ->
-    ?LAZY(oneof([{call,?MODULE, new, [Buckets, FileSize, ?DIR]}]
-                ++ [{call, ?S, put, [store(Buckets, FileSize, Size-1), metric_name(), offset(), non_z_int()]} || Size > 0])).
+store(FileSize, Size) ->
+    ?LAZY(oneof([{call,?MODULE, new, [FileSize, ?DIR]}]
+                ++ [{call, ?S, put, [store(FileSize, Size-1), metric_name(), offset(), non_z_int()]} || Size > 0])).
 
-new(NumFiles, FileSize, Dir) ->
-    {ok, MSet} = mstore:new(NumFiles, FileSize, Dir),
+new(FileSize, Dir) ->
+    {ok, MSet} = mstore:new(FileSize, Dir),
     MSet.
 
 non_z_int() ->
@@ -51,13 +51,13 @@ mset_serializer(S) ->
             mset_serializer(S1)
     end.
 prop_fold_fully() ->
-    ?FORALL({NumFiles, FileSize}, {chash_size(), size()},
-            ?FORALL(D, store(NumFiles, FileSize),
+    ?FORALL(FileSize, size(),
+            ?FORALL(D, store(FileSize),
                     begin
                         os:cmd("rm -r " ++ ?DIR ++"-copy"),
                         os:cmd("rm -r " ++ ?DIR),
                         Original = eval(D),
-                        Copy = new(NumFiles, FileSize, ?DIR ++"-copy"),
+                        Copy = new(FileSize, ?DIR ++"-copy"),
                         OriginalSetSer = spawn(?MODULE, mset_serializer, [Copy]),
                         SerializeOrig = fun(M, T, V, Acc) ->
                                                 OriginalSetSer ! {put, M, T, V},
