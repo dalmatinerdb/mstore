@@ -5,8 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
 
--import(mstore_heler, [int_array/0, float_array/0, pos_int/0, non_neg_int/0,
-                       i_or_f_list/0, i_or_f_array/0, non_empty_i_or_f_list/0]).
+-import(mstore_heler, [int_array/0, pos_int/0, non_neg_int/0,
+                        non_empty_int_list/0, defined_int_array/0]).
 
 -compile(export_all).
 

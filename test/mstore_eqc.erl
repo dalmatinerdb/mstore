@@ -5,8 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
 
--import(mstore_helper, [int_array/0, float_array/0, pos_int/0, non_neg_int/0,
-                       i_or_f_list/0, i_or_f_array/0, non_empty_i_or_f_list/0]).
+-import(mstore_helper, [int_array/0, pos_int/0, non_neg_int/0,
+                        non_empty_int_list/0, defined_int_array/0]).
 
 -compile(export_all).
 %%%-------------------------------------------------------------------
@@ -74,7 +74,7 @@ unlist([E]) ->
 %%%-------------------------------------------------------------------
 prop_read_write() ->
     ?FORALL({Metric, Size, Time, Data},
-            {string(), size(), offset(), non_empty_i_or_f_list()},
+            {string(), size(), offset(), non_empty_int_list()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
                 {ok, S1} = ?S:new(Size, ?DIR),
@@ -89,7 +89,7 @@ prop_read_write() ->
 
 prop_read_len() ->
     ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset},
-            {string(), size(), offset(), non_empty_i_or_f_list(), int(), int()},
+            {string(), size(), offset(), non_empty_int_list(), int(), int()},
             ?IMPLIES((Time + TimeOffset) > 0 andalso
                      (length(Data) + LengthOffset) > 0,
                      begin

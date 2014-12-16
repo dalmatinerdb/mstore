@@ -8,6 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(mstore).
 
+-include_lib("mmath/include/mmath.hrl").
 -include("mstore.hrl").
 
 -ifdef(TEST).
@@ -54,13 +55,13 @@ new(FileSize, Dir) ->
         _ ->
             file:make_dir(Dir),
             MSet = #mset{size=FileSize, dir=Dir},
-            file:write_file(IdxFile, <<FileSize:64/integer>>),
+            file:write_file(IdxFile, <<FileSize:64/?INT_TYPE>>),
             {ok, MSet}
     end.
 
 open_mstore(F) ->
     case file:read_file(F) of
-        {ok, <<Size:64/integer, R/binary>>} ->
+        {ok, <<Size:64/?INT_TYPE, R/binary>>} ->
             {ok, Size, metrics_to_set(R, gb_sets:new())};
         E ->
             E
@@ -87,11 +88,7 @@ get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) ->
 
 put(MSet, Metric, Time, [V0 | _] = Values)
   when is_integer(V0) ->
-    put(MSet, Metric, Time, << <<?INT, V:?BITS/integer>> || V <- Values >>);
-
-put(MSet, Metric, Time, [V0 | _] = Values)
-  when is_float(V0) ->
-    put(MSet, Metric, Time, << <<?FLOAT, V:?BITS/float>> || V <- Values >>);
+    put(MSet, Metric, Time, << <<?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>> || V <- Values >>);
 
 put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
     Metric, Time, Value)
@@ -115,10 +112,7 @@ put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
     MSet1#mset{files = CurFiles1};
 
 put(MSet, Metric, Time, V) when is_integer(V) ->
-    put(MSet, Metric, Time, <<?INT, V:?BITS/integer>>);
-
-put(MSet, Metric, Time, V) when is_float(V) ->
-    put(MSet, Metric, Time, <<?FLOAT, V:?BITS/float>>).
+    put(MSet, Metric, Time, <<?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>>).
 
 do_put(_, _, [], <<>>, Files) ->
     Files;
@@ -291,7 +285,7 @@ open(File, Offset, Size, Mode) ->
                     M = #mstore{name=File, file=F, offset=Offset,
                                 size=Size, next=0},
                     file:write_file(IdxFile,
-                                    <<Offset:64/integer, Size:64/integer>>),
+                                    <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
                     {ok, M};
                 E ->
                     E
@@ -377,9 +371,9 @@ serialize_binary(<<>>, _Fun, FunAcc, _O, <<>>) ->
     FunAcc;
 serialize_binary(<<>>, Fun, FunAcc, O, Acc) ->
     Fun(O, Acc, FunAcc);
-serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, <<>>) ->
+serialize_binary(<<?NONE:?TYPE_SIZE, _:?BITS/?INT_TYPE, R/binary>>, Fun, FunAcc, O, <<>>) ->
     serialize_binary(R, Fun, FunAcc, O+1, <<>>);
-serialize_binary(<<?NONE, _:?BITS/integer, R/binary>>, Fun, FunAcc, O, Acc) ->
+serialize_binary(<<?NONE:?TYPE_SIZE, _:?BITS/?INT_TYPE, R/binary>>, Fun, FunAcc, O, Acc) ->
     FunAcc1 = Fun(O, Acc, FunAcc),
     serialize_binary(R, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
 serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, FunAcc, O, Acc) ->
@@ -387,7 +381,7 @@ serialize_binary(<<V:?DATA_SIZE/binary, R/binary>>, Fun, FunAcc, O, Acc) ->
 
 read_idx(F) ->
     case file:read_file(F) of
-        {ok, <<Offset:64/integer, Size:64/integer, R/binary>>} ->
+        {ok, <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE, R/binary>>} ->
             {Offset, Size, read_idx_entreis(R, gb_trees:empty(), 0)};
         E ->
             E
@@ -461,6 +455,6 @@ add_points(S, Metrics, Size, T, Ps) ->
                              put(SAcc, M, T, Data)
                      end, S, Metrics),
     add_points(S1, Metrics, Size, T+Size, Ps-1).
--endif.
 
+-endif.
 -endif.
