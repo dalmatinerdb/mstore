@@ -19,10 +19,16 @@ store(FileSize) ->
     ?SIZED(Size, store(FileSize, Size)).
 
 store(FileSize, Size) ->
-    ?LAZY(oneof([{call,?MODULE, new, [FileSize, ?DIR]}]
+    ?LAZY(oneof([{call,?MODULE, new, [FileSize, ?DIR]} || Size == 0]
+                ++ [{call, ?MODULE, reopen, [store(FileSize, Size-1), FileSize, ?DIR]}  || Size > 0]
                 ++ [{call, ?S, put, [store(FileSize, Size-1), metric_name(), offset(), non_z_int()]} || Size > 0])).
 
 new(FileSize, Dir) ->
+    {ok, MSet} = mstore:new(FileSize, Dir),
+    MSet.
+
+reopen(Store, FileSize, Dir) ->
+    mstore:close(Store),
     {ok, MSet} = mstore:new(FileSize, Dir),
     MSet.
 
@@ -44,8 +50,7 @@ offset() ->
 mset_serializer(S) ->
     receive
         {From, Ref, get} ->
-            From ! {Ref, S},
-            mset_serializer(S);
+            From ! {Ref, S};
         {put, M, T, V} ->
             S1 = ?S:put(S, M, T, V),
             mset_serializer(S1)
@@ -76,6 +81,8 @@ prop_fold_fully() ->
                                      error
                              end,
                         L2 = ?S:fold(C1, SerializeCopy, []),
+                        ?S:close(Original),
+                        ?S:close(C1),
                         lists:sort(L1) == lists:sort(L2)
                     end)).
 

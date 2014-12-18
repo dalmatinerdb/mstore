@@ -31,10 +31,11 @@ to_list([], _, Acc) ->
     lists:reverse(Acc).
 
 to_bin([{false, _} | R], Acc) ->
-    to_bin(R, <<Acc/binary, ?NONE:?TYPE_SIZE, 0:?BITS/signed-integer>>);
+    to_bin(R, <<Acc/binary, ?NONE:?TYPE_SIZE, 0:?BITS/?INT_TYPE>>);
 
 to_bin([{true, V} | R], Acc) when is_integer(V) ->
-    to_bin(R, <<Acc/binary, ?INT:?TYPE_SIZE, V:?BITS/signed-integer>>);
+    to_bin(R, <<Acc/binary, ?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>>);
 
 to_bin([], Acc) ->
     Acc.
+

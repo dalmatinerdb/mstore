@@ -79,7 +79,8 @@ metrics(#mset{metrics=M}) ->
 metrics(#mstore{index=M}) ->
     gb_trees:keys(M).
 
-get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) ->
+get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) when
+      is_binary(Metric) ->
     ?DT_READ_ENTRY(Metric, Time, Count),
     Parts = make_splits(Time, Count, S, []),
     R = do_get(S, FS, Dir, Metric, Parts, <<>>),
@@ -87,16 +88,20 @@ get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) ->
     R.
 
 put(MSet, Metric, Time, [V0 | _] = Values)
-  when is_integer(V0) ->
+  when is_integer(V0),
+       is_integer(Time), Time >= 0,
+       is_binary(Metric) ->
     put(MSet, Metric, Time, << <<?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>> || V <- Values >>);
 
 put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
     Metric, Time, Value)
-  when is_binary(Value) ->
+  when is_binary(Value),
+       is_integer(Time), Time >= 0,
+       is_binary(Metric) ->
     ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
-    Count = byte_size(Value) / ?DATA_SIZE,
+    Count = mmath_bin:length(Value),
     Parts = make_splits(Time, Count, S, []),
-    Parts1 = [{B, round(C*?DATA_SIZE)} || {B, C} <- Parts],
+    Parts1 = [{B, round(C * ?DATA_SIZE)} || {B, C} <- Parts],
     MSet1 = case gb_sets:is_element(Metric, Ms) of
                 true ->
                     MSet;
@@ -309,10 +314,13 @@ open_store(File) ->
 write(M=#mstore{offset=Offset, size=S}, Metric, Position, Value)
   when is_binary(Value),
        Position >= Offset,
-       (Position - Offset) + (byte_size(Value)/?DATA_SIZE) =< S ->
+       (Position - Offset) + (byte_size(Value) div ?DATA_SIZE) =< S ->
     do_write(M, Metric, Position, Value).
 
-do_write(M=#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Value) ->
+do_write(M=#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position,
+         Value) when
+      is_binary(Metric),
+      is_binary(Value) ->
     {M1, Base} =
         case gb_trees:lookup(Metric, Idx) of
             none ->
@@ -354,9 +362,11 @@ serialize_dir(Dir, Fun, Acc) ->
 
 serialize_index(Store, Fun, Acc) ->
     {ok, MStore} = open_store(Store),
-    lists:foldl(fun(M, AccIn) ->
-                        serialize_metric(MStore, M, Fun, AccIn)
-                end, Acc, metrics(MStore)).
+    Res = lists:foldl(fun(M, AccIn) ->
+                              serialize_metric(MStore, M, Fun, AccIn)
+                      end, Acc, metrics(MStore)),
+    close(MStore),
+    Res.
 
 
 serialize_metric(MStore, Metric, Fun, Acc) ->
