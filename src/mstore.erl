@@ -11,6 +11,10 @@
 -include_lib("mmath/include/mmath.hrl").
 -include("mstore.hrl").
 
+-define(SIZE_TYPE, unsigned-integer).
+
+-define(VERSION, 2).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
@@ -55,13 +59,14 @@ new(FileSize, Dir) ->
         _ ->
             file:make_dir(Dir),
             MSet = #mset{size=FileSize, dir=Dir},
-            file:write_file(IdxFile, <<FileSize:64/?INT_TYPE>>),
+            file:write_file(IdxFile, <<?VERSION:16/?SIZE_TYPE,
+                                       FileSize:64/?SIZE_TYPE>>),
             {ok, MSet}
     end.
 
 open_mstore(F) ->
     case file:read_file(F) of
-        {ok, <<Size:64/?INT_TYPE, R/binary>>} ->
+        {ok, <<?VERSION:16/?SIZE_TYPE, Size:64/?SIZE_TYPE, R/binary>>} ->
             {ok, Size, metrics_to_set(R, gb_sets:new())};
         E ->
             E
