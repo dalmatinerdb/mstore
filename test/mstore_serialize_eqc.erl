@@ -47,6 +47,9 @@ size() ->
 offset() ->
     choose(0, 5000).
 
+chunk() ->
+    oneof([choose(0, 100), infinity]).
+
 mset_serializer(S) ->
     receive
         {From, Ref, get} ->
@@ -57,7 +60,7 @@ mset_serializer(S) ->
     end.
 prop_fold_fully() ->
     ?FORALL(FileSize, size(),
-            ?FORALL(D, store(FileSize),
+            ?FORALL({Chunk, D}, {chunk(), store(FileSize)},
                     begin
                         os:cmd("rm -r " ++ ?DIR ++"-copy"),
                         os:cmd("rm -r " ++ ?DIR),
@@ -71,7 +74,7 @@ prop_fold_fully() ->
                         SerializeCopy = fun(M, T, V, Acc) ->
                                                 [{M, T, V} | Acc]
                                         end,
-                        L1 = ?S:fold(Original, SerializeOrig, []),
+                        L1 = ?S:fold(Original, SerializeOrig, Chunk, []),
                         R0 = make_ref(),
                         OriginalSetSer ! {self(), R0, get},
                         C1 = receive

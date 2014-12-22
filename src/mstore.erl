@@ -25,7 +25,7 @@
 
 -define(OPTS, [raw, binary]).
 -export([put/4, get/4, new/2, delete/1, close/1, open/1, metrics/1,
-         fold/3]).
+         fold/3, fold/4]).
 
 %% @doc Opens an existing mstore.
 
@@ -354,33 +354,77 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             file:pread(F, P, Count*?DATA_SIZE)
     end.
 
-fold(#mset{dir=Dir}, Fun, Acc) ->
-    serialize_dir(Dir, Fun, Acc).
+fold(MSet, Fun, Acc) ->
+    fold(MSet, Fun, infinity, Acc).
 
-serialize_dir(Dir, Fun, Acc) ->
+fold(#mset{dir=Dir}, Fun, Chunk, Acc) ->
+    serialize_dir(Dir, Fun, Chunk, Acc).
+
+serialize_dir(Dir, Fun, Chunk, Acc) ->
     {ok, Fs} = file:list_dir(Dir),
     Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
     Idxs = [I || [I, "idx"] <- Fs1],
     lists:foldl(fun(I, AccIn) ->
-                        serialize_index([Dir, $/, I], Fun, AccIn)
+                        serialize_index([Dir, $/, I], Fun, Chunk, AccIn)
                 end, Acc, Idxs).
 
-serialize_index(Store, Fun, Acc) ->
+serialize_index(Store, Fun, Chunk, Acc) ->
     {ok, MStore} = open_store(Store),
     Res = lists:foldl(fun(M, AccIn) ->
-                              serialize_metric(MStore, M, Fun, AccIn)
+                              serialize_metric(MStore, M, Fun, Chunk, AccIn)
                       end, Acc, metrics(MStore)),
     close(MStore),
     Res.
 
 
-serialize_metric(MStore, Metric, Fun, Acc) ->
+serialize_metric(MStore, Metric, Fun, infinity, Acc) ->
     #mstore{offset=O,size=S} = MStore,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
     {ok, Data} = read(MStore, Metric, O, S),
-    serialize_binary(Data, Fun1, Acc, O, <<>>).
+    serialize_binary(Data, Fun1, Acc, O, <<>>);
+
+serialize_metric(MStore, Metric, Fun, Chunk, Acc) ->
+    serialize_metric(MStore, Metric, Fun, 0, Chunk, Acc).
+
+%% If we've read everything (Start = Size) we just return the acc
+serialize_metric(#mstore{size = _Size},
+                 _Metric, _Fun, _Start, _Chunk, Acc) when _Start == _Size ->
+    Acc;
+
+%% If we have at least 'Chunk' left to read
+serialize_metric(MStore = #mstore{offset = O,
+                                  size = Size},
+                 Metric, Fun, Start, Chunk, Acc) when Start + Chunk < Size ->
+    O1 = O + Start,
+    Fun1 = fun(Offset, Data, AccIn) ->
+                   Fun(Metric, Offset + Start, Data, AccIn)
+           end,
+    case read(MStore, Metric, O1, Chunk) of
+    {ok, Data} ->
+            Acc1 = serialize_binary(Data, Fun1, Acc, O1, <<>>),
+            serialize_metric(MStore, Metric, Fun, Start + Chunk, Chunk, Acc1);
+        eof ->
+            Acc
+    end;
+
+%% We don't have a full chunk left to read.
+serialize_metric(MStore = #mstore{offset = O,
+                                  size = Size},
+                 Metric, Fun, Start, _Chunk, Acc) ->
+    Chunk = Size - Start,
+    O1 = O + Start,
+    Fun1 = fun(Offset, Data, AccIn) ->
+                   Fun(Metric, Offset + Start, Data, AccIn)
+           end,
+    case read(MStore, Metric, O1, Chunk) of
+        {ok, Data} ->
+            serialize_binary(Data, Fun1, Acc, O1, <<>>);
+        eof ->
+            Acc
+    end.
+
 
 serialize_binary(<<>>, _Fun, FunAcc, _O, <<>>) ->
     FunAcc;
