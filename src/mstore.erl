@@ -25,7 +25,7 @@
 
 -define(OPTS, [raw, binary]).
 -export([put/4, get/4, new/2, delete/1, close/1, open/1, metrics/1,
-         fold/3, fold/4]).
+         fold/3, fold/4, make_splits/3]).
 
 %% @doc Opens an existing mstore.
 
@@ -87,7 +87,7 @@ metrics(#mstore{index=M}) ->
 get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) when
       is_binary(Metric) ->
     ?DT_READ_ENTRY(Metric, Time, Count),
-    Parts = make_splits(Time, Count, S, []),
+    Parts = make_splits(Time, Count, S),
     R = do_get(S, FS, Dir, Metric, Parts, <<>>),
     ?DT_READ_RETURN,
     R.
@@ -105,7 +105,7 @@ put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
        is_binary(Metric) ->
     ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
     Count = mmath_bin:length(Value),
-    Parts = make_splits(Time, Count, S, []),
+    Parts = make_splits(Time, Count, S),
     Parts1 = [{B, round(C * ?DATA_SIZE)} || {B, C} <- Parts],
     MSet1 = case gb_sets:is_element(Metric, Ms) of
                 true ->
@@ -245,6 +245,9 @@ do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
             close(F),
             E
     end.
+
+make_splits(Time, Count, Size) ->
+    make_splits(Time, Count, Size, []).
 
 make_splits(_Time, 0, _Size, Acc) ->
     lists:reverse(Acc);
@@ -402,7 +405,7 @@ serialize_metric(MStore = #mstore{offset = O,
                    Fun(Metric, Offset + Start, Data, AccIn)
            end,
     case read(MStore, Metric, O1, Chunk) of
-    {ok, Data} ->
+        {ok, Data} ->
             Acc1 = serialize_binary(Data, Fun1, Acc, O1, <<>>),
             serialize_metric(MStore, Metric, Fun, Start + Chunk, Chunk, Acc1);
         eof ->
@@ -457,12 +460,12 @@ make_splits_test() ->
     T1 = 60,
     C1 = 110,
     S1 = 100,
-    R1 = make_splits(T1, C1, S1, []),
+    R1 = make_splits(T1, C1, S1),
     ?assertEqual([{60, 40}, {100, 70}], R1),
     T2 = 1401895990,
     S2 = 1000,
     C2 = 20,
-    R2 = make_splits(T2, C2, S2, []),
+    R2 = make_splits(T2, C2, S2),
     ?assertEqual([{1401895990, 10}, {1401896000, 10}], R2).
 
 -ifdef(BENCH).
