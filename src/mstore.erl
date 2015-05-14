@@ -8,63 +8,271 @@
 %%%-------------------------------------------------------------------
 -module(mstore).
 
+-export([
+         new/2,
+         open/1,
+         close/1,
+         delete/1,
+         get/4,
+         put/4,
+         metrics/1,
+         fold/3, fold/4,
+         make_splits/3]).
+-export_type([mstore/0]).
+
+
 -include_lib("mmath/include/mmath.hrl").
 -include("mstore.hrl").
 
 -define(SIZE_TYPE, unsigned-integer).
 
 -define(VERSION, 2).
+-define(OPTS, [raw, binary]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 -endif.
 
--record(mstore, {name, file, offset, size, index=gb_trees:empty(), next=0}).
--record(mset, {size, files=[], dir, metrics=gb_sets:new()}).
+-record(mfile, {
+          name,
+          file,
+          offset,
+          size,
+          index = gb_trees:empty(),
+          next = 0
+         }).
+-record(mstore, {
+          size,
+          files=[],
+          dir,
+          metrics = gb_sets:new()
+         }).
 
--define(OPTS, [raw, binary]).
--export([put/4, get/4, new/2, delete/1, close/1, open/1, metrics/1,
-         fold/3, fold/4, make_splits/3]).
+-opaque mstore() :: #mstore{}.
 
-%% @doc Opens an existing mstore.
+-type fold_fun() :: fun((Metric :: binary(),
+                         Offset :: non_neg_integer(),
+                         Data :: binary(), AccIn :: any()) -> AccOut :: any()).
 
-delete(MSet = #mset{dir=Dir}) ->
-    close(MSet),
+
+
+%%--------------------------------------------------------------------
+%% Public API
+%%--------------------------------------------------------------------
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Creates a new set or opens an existing one.
+%% @end
+%%--------------------------------------------------------------------
+-spec new(FileSize :: pos_integer(),
+           Dir :: string()) -> {ok, mstore()} |
+                               {error, filesize_missmatch}.
+
+new(FileSize, Dir) when
+      is_integer(FileSize), FileSize > 0,
+      is_binary(Dir) ->
+    new(FileSize, binary_to_list(Dir));
+
+new(FileSize, Dir) ->
+    IdxFile = [Dir | "/mstore"],
+    case open_mfile(IdxFile) of
+        {ok, F, _Metrics} when F =/= FileSize ->
+            {error, filesize_missmatch};
+        {ok, F, Metrics} when F =:= FileSize ->
+            {ok, #mstore{size=FileSize, dir=Dir, metrics=Metrics}};
+        _ ->
+            file:make_dir(Dir),
+            MStore = #mstore{size=FileSize, dir=Dir},
+            file:write_file(IdxFile, <<?VERSION:16/?SIZE_TYPE,
+                                       FileSize:64/?SIZE_TYPE>>),
+            {ok, MStore}
+    end.
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Opens an existing set.
+%% @end
+%%--------------------------------------------------------------------
+-spec open(Dir :: string()) -> {ok, mstore()} | {error, not_found}.
+
+open(Dir) ->
+    case open_mfile([Dir | "/mstore"]) of
+        {ok, FileSize, Metrics} ->
+            {ok, #mstore{size=FileSize, dir=Dir, metrics=Metrics}};
+        _ ->
+            {error, not_found}
+    end.
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Closes a metric set.
+%% @end
+%%--------------------------------------------------------------------
+-spec close(mstore()) -> ok.
+
+close(#mstore{files=Files}) ->
+    [close_store(S) || {_, S} <- Files],
+    ok.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Recursively deletes a metric set.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete(mstore()) -> ok | {error, atom()}.
+
+delete(MStore = #mstore{dir=Dir}) ->
+    close(MStore),
     {ok, Files} = file:list_dir(Dir),
     Files1 = [[Dir, $/ | File] || File <- Files],
     [file:delete(F) || F <- Files1],
     file:del_dir(Dir).
 
--spec open(Dir :: string()) -> {ok, #mset{}} | {error, not_found}.
+%%--------------------------------------------------------------------
+%% @doc
+%% Reads data from a set.
+%% @end
+%%--------------------------------------------------------------------
+-spec get(
+        mstore(),
+        binary(),
+        non_neg_integer(),
+        pos_integer()) ->
+                 {'error',atom()} |
+                 {ok, binary()}.
 
-open(Dir) ->
-    case open_mstore([Dir | "/mstore"]) of
-        {ok, FileSize, Metrics} ->
-            {ok, #mset{size=FileSize, dir=Dir, metrics=Metrics}};
-        _ ->
-            {error, not_found}
+get(#mstore{size=S, files=FS, dir=Dir}, Metric, Time, Count) when
+      is_binary(Metric),
+      is_integer(Time), Time >= 0,
+      is_integer(Count), Count > 0 ->
+    ?DT_READ_ENTRY(Metric, Time, Count),
+    Parts = make_splits(Time, Count, S),
+    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
+    ?DT_READ_RETURN,
+    R.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Folds over all the metrics in a store. Please be aware that the
+%% data for a single metric is not guaranteed to be delivered at a time
+%% it is split on non set values and file boundaries!
+%% @end
+%%--------------------------------------------------------------------
+
+-spec fold(mstore(), FoldFun :: fold_fun(), AccIn :: any()) ->
+                  AccOut :: any().
+fold(MStore, FoldFun, Acc) ->
+    fold(MStore, FoldFun, infinity, Acc).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Same as {@link: fold/3} but data is chunked at a maximum size of
+%% *ChunkSize*.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec fold(mstore(), FoldFun :: fold_fun(), ChunkSize :: pos_integer() | infinity,
+           AccIn :: any()) ->
+                  AccOut :: any().
+fold(#mstore{dir=Dir}, Fun, Chunk, Acc) ->
+    serialize_dir(Dir, Fun, Chunk, Acc).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Writes data into a mstore.
+%% @end
+%%--------------------------------------------------------------------
+-spec put(mstore(), binary(), non_neg_integer(),
+          integer() | [integer()] | binary()) ->
+    mstore().
+
+put(MStore, Metric, Time, [V0 | _] = Values)
+  when is_integer(V0) ->
+    put(MStore, Metric, Time, mmath_bin:from_list(Values));
+
+put(MStore, Metric, Time, V) when is_integer(V) ->
+    put(MStore, Metric, Time, mmath_bin:from_list([V]));
+
+put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms},
+    Metric, Time, Value)
+  when is_binary(Value),
+       is_integer(Time), Time >= 0,
+       is_binary(Metric) ->
+    ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
+    Count = mmath_bin:length(Value),
+    Parts = make_splits(Time, Count, S),
+    Parts1 = [{B, round(C * ?DATA_SIZE)} || {B, C} <- Parts],
+    MStore1 = case gb_sets:is_element(Metric, Ms) of
+                true ->
+                    MStore;
+                false ->
+                    MStorex = MStore#mstore{metrics=gb_sets:add_element(Metric, Ms)},
+                    file:write_file([MStorex#mstore.dir | "/mstore"],
+                                    <<(byte_size(Metric)):16/integer, Metric/binary>>,
+                                    [read, append]),
+                    MStorex
+            end,
+    CurFiles1 = do_put(MStore1, Metric, Parts1, Value, CurFiles),
+    ?DT_WRITE_RETURN,
+    MStore1#mstore{files = CurFiles1}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns a set of all metrics in the store.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec metrics(mstore()) -> gb_sets:set().
+
+metrics(#mstore{metrics=M}) ->
+    M.
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Utility function to split a continous data streams in chunks for a
+%% given time range size.
+%%
+%% * Time - the offset of the first value.
+%% * Count - the total number of values.
+%% * Size - The size of the chunking.
+%% @end
+%%--------------------------------------------------------------------
+-spec make_splits(Time :: non_neg_integer(),
+                  Count :: pos_integer(),
+                  Size :: pos_integer()) ->
+                         [{StartTime :: non_neg_integer(),
+                           ChunkSize :: pos_integer()}].
+
+make_splits(Time, Count, Size) ->
+    make_splits(Time, Count, Size, []).
+
+%%--------------------------------------------------------------------
+%% Private functions.
+%%--------------------------------------------------------------------
+
+make_splits(_Time, 0, _Size, Acc) ->
+    lists:reverse(Acc);
+
+make_splits(Time, Count, Size, Acc) ->
+    Base = (Time div Size)*Size,
+    case Time - Base of
+        D when (D + Count) < Size ->
+            lists:reverse([{Time, Count} | Acc]);
+        D ->
+            Inc = Size-D,
+            make_splits(Time + Inc, Count - Inc, Size, [{Time, Inc} | Acc])
     end.
 
-new(FileSize, Dir) when is_binary(Dir) ->
-    new(FileSize, binary_to_list(Dir));
+store_metrics(#mfile{index=M}) ->
+    gb_trees:keys(M).
 
-new(FileSize, Dir) ->
-    IdxFile = [Dir | "/mstore"],
-    case open_mstore(IdxFile) of
-        {ok, F, _Metrics} when F =/= FileSize ->
-            {error, filesize_missmatch};
-        {ok, F, Metrics} when F =:= FileSize ->
-            {ok, #mset{size=FileSize, dir=Dir, metrics=Metrics}};
-        _ ->
-            file:make_dir(Dir),
-            MSet = #mset{size=FileSize, dir=Dir},
-            file:write_file(IdxFile, <<?VERSION:16/?SIZE_TYPE,
-                                       FileSize:64/?SIZE_TYPE>>),
-            {ok, MSet}
-    end.
-
-open_mstore(F) ->
+open_mfile(F) ->
     case file:read_file(F) of
         {ok, <<?VERSION:16/?SIZE_TYPE, Size:64/?SIZE_TYPE, R/binary>>} ->
             {ok, Size, metrics_to_set(R, gb_sets:new())};
@@ -78,83 +286,37 @@ metrics_to_set(<<_L:16/integer, M:_L/binary, R/binary>>, S) ->
 metrics_to_set(<<>>, S) ->
     S.
 
-metrics(#mset{metrics=M}) ->
-    M;
-
-metrics(#mstore{index=M}) ->
-    gb_trees:keys(M).
-
-get(#mset{size=S, files=FS, dir=Dir}, Metric, Time, Count) when
-      is_binary(Metric) ->
-    ?DT_READ_ENTRY(Metric, Time, Count),
-    Parts = make_splits(Time, Count, S),
-    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
-    ?DT_READ_RETURN,
-    R.
-
-put(MSet, Metric, Time, [V0 | _] = Values)
-  when is_integer(V0),
-       is_integer(Time), Time >= 0,
-       is_binary(Metric) ->
-    put(MSet, Metric, Time, << <<?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>> || V <- Values >>);
-
-put(MSet = #mset{size=S, files=CurFiles, metrics=Ms},
-    Metric, Time, Value)
-  when is_binary(Value),
-       is_integer(Time), Time >= 0,
-       is_binary(Metric) ->
-    ?DT_WRITE_ENTRY(Metric, Time, mmath_bin:length(Value)),
-    Count = mmath_bin:length(Value),
-    Parts = make_splits(Time, Count, S),
-    Parts1 = [{B, round(C * ?DATA_SIZE)} || {B, C} <- Parts],
-    MSet1 = case gb_sets:is_element(Metric, Ms) of
-                true ->
-                    MSet;
-                false ->
-                    MSetx = MSet#mset{metrics=gb_sets:add_element(Metric, Ms)},
-                    file:write_file([MSetx#mset.dir | "/mstore"],
-                                    <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                    [read, append]),
-                    MSetx
-            end,
-    CurFiles1 = do_put(MSet1, Metric, Parts1, Value, CurFiles),
-    ?DT_WRITE_RETURN,
-    MSet1#mset{files = CurFiles1};
-
-put(MSet, Metric, Time, V) when is_integer(V) ->
-    put(MSet, Metric, Time, <<?INT:?TYPE_SIZE, V:?BITS/?INT_TYPE>>).
-
 do_put(_, _, [], <<>>, Files) ->
     Files;
 
-do_put(MSet = #mset{size=S}, Metric,
+do_put(MStore = #mstore{size=S}, Metric,
        [{Time, Size} | R], InData,
        [{FileBase, F} | FileRest]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     {ok, F1} = write(F, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F1} | FileRest]);
+    do_put(MStore, Metric, R, DataRest, [{FileBase, F1} | FileRest]);
 
-do_put(MSet = #mset{size=S}, Metric,
+do_put(MStore = #mstore{size=S}, Metric,
        [{Time, Size} | R], InData,
        [First, {FileBase, F}]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     {ok, F1} = write(F, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F1}, First]);
+    do_put(MStore, Metric, R, DataRest, [{FileBase, F1}, First]);
 
-do_put(MSet = #mset{size=S, dir=D}, Metric,
+do_put(MStore = #mstore{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
        [First, {_Other, F}]) ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
-    close(F),
+    close_store(F),
     Base = [D, $/, integer_to_list(FileBase)],
     {ok, F1} = open(Base, FileBase, S, write),
     {ok, F2} = write(F1, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F2}, First]);
+    do_put(MStore, Metric, R, DataRest, [{FileBase, F2}, First]);
 
-do_put(MSet = #mset{size=S, dir=D}, Metric,
+do_put(MStore = #mstore{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
        Files) when length(Files) < 2 ->
     <<Data:Size/binary, DataRest/binary>> = InData,
@@ -162,7 +324,7 @@ do_put(MSet = #mset{size=S, dir=D}, Metric,
     Base = [D, $/, integer_to_list(FileBase)],
     {ok, F1} = open(Base, FileBase, S, write),
     {ok, F2} = write(F1, Metric, Time, Data),
-    do_put(MSet, Metric, R, DataRest, [{FileBase, F2} | Files]).
+    do_put(MStore, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
 do_get(_, _, _, _, [], Acc) ->
     {ok, Acc};
@@ -223,7 +385,7 @@ do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
     {ok, F} = open(Base, FileBase, S, read),
     case read(F, Metric, Time, Count) of
         {ok, D} ->
-            close(F),
+            close_store(F),
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
                        L when L < Count ->
@@ -234,40 +396,19 @@ do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
                    end,
             do_get(S, FS, Dir, Metric, R, Acc2);
         {error,not_found} ->
-            close(F),
+            close_store(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, Metric, R, Acc1);
         eof ->
-            close(F),
+            close_store(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, Metric, R, Acc1);
         E ->
-            close(F),
+            close_store(F),
             E
     end.
 
-make_splits(Time, Count, Size) ->
-    make_splits(Time, Count, Size, []).
-
-make_splits(_Time, 0, _Size, Acc) ->
-    lists:reverse(Acc);
-
-make_splits(Time, Count, Size, Acc) ->
-    Base = (Time div Size)*Size,
-    case Time - Base of
-        D when (D + Count) < Size ->
-            lists:reverse([{Time, Count} | Acc]);
-        D ->
-            Inc = Size-D,
-            make_splits(Time + Inc, Count - Inc, Size, [{Time, Inc} | Acc])
-    end.
-
-
-close(#mset{files=Files}) ->
-    [close(S) || {_, S} <- Files],
-    ok;
-
-close(#mstore{file=F}) ->
+close_store(#mfile{file=F}) ->
     file:close(F).
 
 open(File, Offset, Size, Mode) ->
@@ -283,7 +424,7 @@ open(File, Offset, Size, Mode) ->
                          Size =:= S ->
             case file:open([File | ".mstore"], FileOpts) of
                 {ok, F} ->
-                    {ok, #mstore{index=Idx, name=File, file=F, offset=Offset,
+                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
                                  size=Size, next=gb_trees:size(Idx)}};
                 E ->
                     E
@@ -295,7 +436,7 @@ open(File, Offset, Size, Mode) ->
         _E ->
             case file:open([File |".mstore"], [read, write | ?OPTS]) of
                 {ok, F} ->
-                    M = #mstore{name=File, file=F, offset=Offset,
+                    M = #mfile{name=File, file=F, offset=Offset,
                                 size=Size, next=0},
                     file:write_file(IdxFile,
                                     <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
@@ -310,7 +451,7 @@ open_store(File) ->
         {Offset, Size, Idx} ->
             case file:open([File | ".mstore"], [read | ?OPTS]) of
                 {ok, F} ->
-                    {ok, #mstore{index=Idx, name=File, file=F, offset=Offset,
+                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
                                  size=Size, next=gb_trees:size(Idx)}};
                 E ->
                     E
@@ -319,22 +460,22 @@ open_store(File) ->
             E
     end.
 
-write(M=#mstore{offset=Offset, size=S}, Metric, Position, Value)
+write(M=#mfile{offset=Offset, size=S}, Metric, Position, Value)
   when is_binary(Value),
        Position >= Offset,
        (Position - Offset) + (byte_size(Value) div ?DATA_SIZE) =< S ->
     do_write(M, Metric, Position, Value).
 
-do_write(M=#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position,
+do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position,
          Value) when
       is_binary(Metric),
       is_binary(Value) ->
     {M1, Base} =
         case gb_trees:lookup(Metric, Idx) of
             none ->
-                Pos = M#mstore.next,
-                Mx = M#mstore{next=Pos+1, index=gb_trees:insert(Metric, Pos, Idx)},
-                file:write_file([M#mstore.name | ".idx"],
+                Pos = M#mfile.next,
+                Mx = M#mfile{next=Pos+1, index=gb_trees:insert(Metric, Pos, Idx)},
+                file:write_file([M#mfile.name | ".idx"],
                                 <<(byte_size(Metric)):16/integer, Metric/binary>>,
                                 [read, append]),
                 {Mx, Pos*S*?DATA_SIZE};
@@ -345,7 +486,7 @@ do_write(M=#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position,
     R = file:pwrite(F, P, Value),
     {R, M1}.
 
-read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
+read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
   when Position >= Offset,
        (Position - Offset) + Count =< S ->
     case gb_trees:lookup(Metric, Idx) of
@@ -357,12 +498,6 @@ read(#mstore{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             file:pread(F, P, Count*?DATA_SIZE)
     end.
 
-fold(MSet, Fun, Acc) ->
-    fold(MSet, Fun, infinity, Acc).
-
-fold(#mset{dir=Dir}, Fun, Chunk, Acc) ->
-    serialize_dir(Dir, Fun, Chunk, Acc).
-
 serialize_dir(Dir, Fun, Chunk, Acc) ->
     {ok, Fs} = file:list_dir(Dir),
     Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
@@ -372,48 +507,48 @@ serialize_dir(Dir, Fun, Chunk, Acc) ->
                 end, Acc, Idxs).
 
 serialize_index(Store, Fun, Chunk, Acc) ->
-    {ok, MStore} = open_store(Store),
+    {ok, MFile} = open_store(Store),
     Res = lists:foldl(fun(M, AccIn) ->
-                              serialize_metric(MStore, M, Fun, Chunk, AccIn)
-                      end, Acc, metrics(MStore)),
-    close(MStore),
+                              serialize_metric(MFile, M, Fun, Chunk, AccIn)
+                      end, Acc, store_metrics(MFile)),
+    close_store(MFile),
     Res.
 
 
-serialize_metric(MStore, Metric, Fun, infinity, Acc) ->
-    #mstore{offset=O,size=S} = MStore,
+serialize_metric(MFile, Metric, Fun, infinity, Acc) ->
+    #mfile{offset=O,size=S} = MFile,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
-    {ok, Data} = read(MStore, Metric, O, S),
+    {ok, Data} = read(MFile, Metric, O, S),
     serialize_binary(Data, Fun1, Acc, O, <<>>);
 
-serialize_metric(MStore, Metric, Fun, Chunk, Acc) ->
-    serialize_metric(MStore, Metric, Fun, 0, Chunk, Acc).
+serialize_metric(MFile, Metric, Fun, Chunk, Acc) ->
+    serialize_metric(MFile, Metric, Fun, 0, Chunk, Acc).
 
 %% If we've read everything (Start = Size) we just return the acc
-serialize_metric(#mstore{size = _Size},
+serialize_metric(#mfile{size = _Size},
                  _Metric, _Fun, _Start, _Chunk, Acc) when _Start == _Size ->
     Acc;
 
 %% If we have at least 'Chunk' left to read
-serialize_metric(MStore = #mstore{offset = O,
+serialize_metric(MFile = #mfile{offset = O,
                                   size = Size},
                  Metric, Fun, Start, Chunk, Acc) when Start + Chunk < Size ->
     O1 = O + Start,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset + Start, Data, AccIn)
            end,
-    case read(MStore, Metric, O1, Chunk) of
+    case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
             Acc1 = serialize_binary(Data, Fun1, Acc, O1, <<>>),
-            serialize_metric(MStore, Metric, Fun, Start + Chunk, Chunk, Acc1);
+            serialize_metric(MFile, Metric, Fun, Start + Chunk, Chunk, Acc1);
         eof ->
             Acc
     end;
 
 %% We don't have a full chunk left to read.
-serialize_metric(MStore = #mstore{offset = O,
+serialize_metric(MFile = #mfile{offset = O,
                                   size = Size},
                  Metric, Fun, Start, _Chunk, Acc) ->
     Chunk = Size - Start,
@@ -421,7 +556,7 @@ serialize_metric(MStore = #mstore{offset = O,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset + Start, Data, AccIn)
            end,
-    case read(MStore, Metric, O1, Chunk) of
+    case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
             serialize_binary(Data, Fun1, Acc, O1, <<>>);
         eof ->

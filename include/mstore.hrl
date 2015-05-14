@@ -12,13 +12,13 @@
 -define(DT_WRITE, 2).
 
 -define(DT_READ_ENTRY(Metric, Time, Size),
-        dyntrace:p(?DT_MSTORE_READ_ENTRY, Time, Size, Metric)).
+        dyntrace:p(?DT_MSTORE_READ_ENTRY, Time, Size, [Metric])).
 
 -define(DT_READ_RETURN,
         dyntrace:p(?DT_MSTORE_READ_RETURN)).
 
 -define(DT_WRITE_ENTRY(Metric, Time, Size),
-        dyntrace:p(?DT_MSTORE_WRITE_ENTRY, Time, Size, Metric)).
+        dyntrace:p(?DT_MSTORE_WRITE_ENTRY, Time, Size, [Metric])).
 
 -define(DT_WRITE_RETURN,
         dyntrace:p(?DT_MSTORE_WRITE_RETURN)).
