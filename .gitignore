@@ -6,3 +6,4 @@ deps
 .eqc-info
 *.beam
 *.eqc
+.qcdata

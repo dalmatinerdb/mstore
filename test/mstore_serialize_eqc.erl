@@ -1,7 +1,6 @@
 -module(mstore_serialize_eqc).
 
 -include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
 
@@ -19,17 +18,21 @@ store(FileSize) ->
     ?SIZED(Size, store(FileSize, Size)).
 
 store(FileSize, Size) ->
-    ?LAZY(oneof([{call,?MODULE, new, [FileSize, ?DIR]} || Size == 0]
+    ?LAZY(oneof([{call, ?MODULE, new, [FileSize, ?DIR]} || Size == 0]
                 ++ [{call, ?MODULE, reopen, [store(FileSize, Size-1), FileSize, ?DIR]}  || Size > 0]
+                ++ [{call, ?MODULE, reindex, [store(FileSize, Size-1)]}  || Size > 0]
                 ++ [{call, ?S, put, [store(FileSize, Size-1), metric_name(), offset(), non_z_int()]} || Size > 0])).
 
 new(FileSize, Dir) ->
-    {ok, MSet} = mstore:new(FileSize, Dir),
+    {ok, MSet} = mstore:new(Dir, [{file_size, FileSize}]),
     MSet.
 
 reopen(Store, FileSize, Dir) ->
     mstore:close(Store),
-    {ok, MSet} = mstore:new(FileSize, Dir),
+    {ok, MSet} = mstore:new(Dir, [{file_size, FileSize}]),
+    MSet.
+reindex(Store) ->
+    {ok, MSet} = mstore:reindex(Store),
     MSet.
 
 non_z_int() ->

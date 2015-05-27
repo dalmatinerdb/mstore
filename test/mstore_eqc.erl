@@ -1,7 +1,6 @@
 -module(mstore_eqc).
 
 -include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
 
@@ -31,8 +30,10 @@ reopen(FileSize, Size) ->
     ?LAZY(?LET({S, T},
                store(FileSize, Size-1),
                {oneof(
-                  [{call,?MODULE, renew, [S, FileSize, ?DIR]},
-                   {call,?MODULE, do_reopen, [S, ?DIR]}]), T})).
+                  [
+                   {call, ?MODULE, do_reindex, [S]},
+                   {call, ?MODULE, renew, [S, FileSize, ?DIR]},
+                   {call, ?MODULE, do_reopen, [S, ?DIR]}]), T})).
 
 store(FileSize, Size) ->
     ?LAZY(oneof(
@@ -41,6 +42,10 @@ store(FileSize, Size) ->
             ++ [frequency(
                   [{9, insert(FileSize, Size)},
                    {1, reopen(FileSize, Size)}]) || Size > 0])).
+
+do_reindex(Old) ->
+    {ok, MSet} = mstore:reindex(Old),
+    MSet.
 
 do_reopen(Old, Dir) ->
     ok = mstore:close(Old),
@@ -52,7 +57,7 @@ renew(Old, FileSize, Dir) ->
     new(FileSize, Dir).
 
 new(FileSize, Dir) ->
-    {ok, MSet} = mstore:new(FileSize, Dir),
+    {ok, MSet} = mstore:new(Dir, [{file_size, FileSize}]),
     MSet.
 
 non_z_int() ->
@@ -77,7 +82,7 @@ prop_read_write() ->
             {string(), size(), offset(), non_empty_int_list()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
-                {ok, S1} = ?S:new(Size, ?DIR),
+                {ok, S1} = ?S:new(?DIR, [{file_size, Size}]),
                 S2 = ?S:put(S1, Metric, Time, Data),
                 {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
                 Res2 = mmath_bin:to_list(Res1),
@@ -94,7 +99,7 @@ prop_read_len() ->
                      (length(Data) + LengthOffset) > 0,
                      begin
                          os:cmd("rm -r " ++ ?DIR),
-                         {ok, S1} = ?S:new(Size, ?DIR),
+                         {ok, S1} = ?S:new(?DIR, [{file_size, Size}]),
                          S2 = ?S:put(S1, Metric, Time, Data),
                          ReadLen = length(Data) + LengthOffset,
                          ReadTime = Time + TimeOffset,
