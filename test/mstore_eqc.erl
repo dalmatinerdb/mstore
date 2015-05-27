@@ -35,13 +35,32 @@ reopen(FileSize, Size) ->
                    {call, ?MODULE, renew, [S, FileSize, ?DIR]},
                    {call, ?MODULE, do_reopen, [S, ?DIR]}]), T})).
 
+delete(FileSize, Size) ->
+        ?LAZY(?LET({{S, T}, O},
+               {store(FileSize, Size-1), offset()},
+               {{call, ?MODULE, do_delete, [S, O]},
+                {call, ?MODULE, do_delete_t, [O, FileSize, T]}})).
+
+
 store(FileSize, Size) ->
     ?LAZY(oneof(
             [{{call, ?MODULE, new, [FileSize, ?DIR]}, {call, ?G, empty, []}}
              || Size == 0]
             ++ [frequency(
                   [{9, insert(FileSize, Size)},
+                   {1, delete(FileSize, Size)},
                    {1, reopen(FileSize, Size)}]) || Size > 0])).
+
+do_delete(Set, Offset) ->
+    {ok, MSet} = mstore:delete(Set, Offset),
+    MSet.
+
+do_delete_t(Offset, FileSize, Tree) ->
+    O1 = (Offset div FileSize) * FileSize,
+    G = [{T, V} || {T, V} <- ?G:to_list(Tree),
+                   T > O1],
+    G1 = lists:sort(G),
+    ?G:from_orddict(G1).
 
 do_reindex(Old) ->
     {ok, MSet} = mstore:reindex(Old),

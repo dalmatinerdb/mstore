@@ -13,6 +13,7 @@
          open/1,
          close/1,
          delete/1,
+         delete/2,
          reindex/1,
          get/4,
          put/4,
@@ -150,6 +151,28 @@ delete(MStore = #mstore{dir=Dir}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Deletes entries before *Before*, not exact since it's rounded to
+%% the next file.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec delete(mstore(), pos_integer()) -> {ok, mstore()}.
+delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
+    Before1 = Before div S,
+    Chunks = chunks(Dir, ".mstore"),
+    Chunks1 = lists:takewhile(fun(C) ->
+                                      C =< Before1
+                              end, Chunks),
+    [close_store(F) || {_, F} <- Files],
+    [begin
+         F = [Dir, $/, integer_to_list(C), $.],
+         file:delete([F | "mstore"]),
+         file:delete([F | "idx"])
+     end || C <- Chunks1],
+    reindex(MStore#mstore{files = []}).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Reads data from a set.
 %% @end
 %%--------------------------------------------------------------------
@@ -273,7 +296,12 @@ reindex(MStore = #mstore{dir = Dir}) ->
     IdxFileNew = [Dir | "/mstore.new"],
 
     Files = filelib:wildcard([Dir | "/*.idx"]),
-    Metrics = lists:foldl(fun reindex_chunk/2, gb_sets:new(), Files),
+    {ok, IO} = file:open(IdxFileNew, [write | ?OPTS]),
+    ok = file:write(IO, index_header(MStore)),
+    Metrics = lists:foldl(fun (F, Set) ->
+                                  reindex_chunk(IO, F, Set)
+                          end, gb_sets:new(), Files),
+    ok = file:close(IO),
     NewIndex = << <<(byte_size(Metric)):16/integer, Metric/binary>>
                   || Metric <- gb_sets:to_list(Metrics) >>,
     ok = file:write_file(IdxFileNew, <<(index_header(MStore))/binary,
@@ -286,12 +314,18 @@ reindex(MStore = #mstore{dir = Dir}) ->
 %% Private functions.
 %%====================================================================
 
-reindex_chunk(File, Set) ->
+chunks(Dir, Ext) ->
+    lists:sort([list_to_integer(filename:rootname(filename:basename(F))) ||
+                   F <- filelib:wildcard([Dir | "/*." ++ Ext])]).
+
+reindex_chunk(IO, File, Set) ->
     fold_idx(fun({entry, M}, Acc) ->
+                     ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
                      gb_sets:add(M, Acc);
                 (_, Acc) ->
                      Acc
              end, Set, File).
+
 index_header(#mstore{size=FileSize, data_size=DataSize}) ->
     <<?VERSION:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, DataSize:64/?SIZE_TYPE>>.
 
