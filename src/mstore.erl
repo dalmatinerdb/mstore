@@ -42,7 +42,7 @@
           file,
           offset,
           size,
-          index = gb_trees:empty(),
+          index = btrie:new(),
           next = 0
          }).
 
@@ -51,7 +51,7 @@
           files=[],
           dir,
           data_size = ?DATA_SIZE,
-          metrics = gb_sets:new()
+          metrics = btrie:new()
          }).
 
 -opaque mstore() :: #mstore{}.
@@ -246,11 +246,11 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
     Count = mmath_bin:length(Value),
     Parts = make_splits(Time, Count, S),
     Parts1 = [{B, round(C * DataSize)} || {B, C} <- Parts],
-    MStore1 = case gb_sets:is_element(Metric, Ms) of
+    MStore1 = case btrie:is_key(Metric, Ms) of
                   true ->
                       MStore;
                   false ->
-                      MStorex = MStore#mstore{metrics=gb_sets:add_element(Metric, Ms)},
+                      MStorex = MStore#mstore{metrics=btrie:append(Metric, t, Ms)},
                       file:write_file([MStorex#mstore.dir | "/mstore"],
                                       <<(byte_size(Metric)):16/integer, Metric/binary>>,
                                       [read, append]),
@@ -266,7 +266,7 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
 %% @end
 %%--------------------------------------------------------------------
 
--spec metrics(mstore()) -> gb_sets:set().
+-spec metrics(mstore()) -> btrie:btrie().
 
 metrics(#mstore{metrics=M}) ->
     M.
@@ -300,10 +300,10 @@ reindex(MStore = #mstore{dir = Dir}) ->
     ok = file:write(IO, index_header(MStore)),
     Metrics = lists:foldl(fun (F, Set) ->
                                   reindex_chunk(IO, F, Set)
-                          end, gb_sets:new(), Files),
+                          end, btrie:new(), Files),
     ok = file:close(IO),
     NewIndex = << <<(byte_size(Metric)):16/integer, Metric/binary>>
-                  || Metric <- gb_sets:to_list(Metrics) >>,
+                  || Metric <- btrie:fetch_keys(Metrics) >>,
     ok = file:write_file(IdxFileNew, <<(index_header(MStore))/binary,
                                        NewIndex/binary>>),
     ok = file:delete(IdxFileOld),
@@ -321,7 +321,7 @@ chunks(Dir, Ext) ->
 reindex_chunk(IO, File, Set) ->
     fold_idx(fun({entry, M}, Acc) ->
                      ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
-                     gb_sets:add(M, Acc);
+                     btrie:append(M, t, Acc);
                 (_, Acc) ->
                      Acc
              end, Set, File).
@@ -343,7 +343,7 @@ make_splits(Time, Count, Size, Acc) ->
     end.
 
 store_metrics(#mfile{index=M}) ->
-    gb_trees:keys(M).
+    btrie:fetch_keys(M).
 
 open_mfile(F) ->
     Chunk = 4*1024,
@@ -353,15 +353,15 @@ open_mfile(F) ->
                 {ok, <<2:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
                                      fun({entry, M}, Acc) ->
-                                             gb_sets:add(M, Acc)
-                                     end, gb_sets:new(), R),
+                                             btrie:append(M, t, Acc)
+                                     end, btrie:new(), R),
                     {ok, FileSize, 8, Set};
                 {ok, <<?VERSION:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE,
                        DataSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
                                      fun({entry, M}, Acc) ->
-                                             gb_sets:add(M, Acc)
-                                     end, gb_sets:new(), R),
+                                             btrie:append(M, t, Acc)
+                                     end, btrie:new(), R),
                     {ok, FileSize, DataSize, Set};
                 {ok, _} ->
                     file:close(IO),
@@ -560,15 +560,15 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
       is_binary(Metric),
       is_binary(Value) ->
     {M1, Base} =
-        case gb_trees:lookup(Metric, Idx) of
-            none ->
+        case btrie:find(Metric, Idx) of
+            error ->
                 Pos = M#mfile.next,
-                Mx = M#mfile{next=Pos+1, index=gb_trees:insert(Metric, Pos, Idx)},
+                Mx = M#mfile{next=Pos+1, index=btrie:append(Metric, Pos, Idx)},
                 file:write_file([M#mfile.name | ".idx"],
                                 <<(byte_size(Metric)):16/integer, Metric/binary>>,
                                 [read, append]),
                 {Mx, Pos*S*DataSize};
-            {value, Pos} ->
+            {ok, [Pos]} ->
                 {M,Pos*S*DataSize}
         end,
     P = Base+((Position - Offset)*DataSize),
@@ -579,10 +579,10 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx},
      DataSize, Metric, Position, Count)
   when Position >= Offset,
        (Position - Offset) + Count =< S ->
-    case gb_trees:lookup(Metric, Idx) of
-        none ->
+    case btrie:find(Metric, Idx) of
+        error ->
             {error, not_found};
-        {value, Pos} ->
+        {ok, [Pos]} ->
             Base = Pos * S * DataSize,
             P = Base+((Position - Offset) * DataSize),
             file:pread(F, P, Count * DataSize)
@@ -674,9 +674,9 @@ serialize_binary(DataSize, R, Fun, FunAcc, O, Acc) ->
 
 read_idx(F) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
-                     {Offset, Size, gb_trees:empty(), 0};
+                     {Offset, Size, btrie:new(), 0};
                 ({entry, M}, {Offset, Size, T, I}) ->
-                     {Offset, Size, gb_trees:insert(M, I, T), I+1}
+                     {Offset, Size, btrie:append(M, I, T), I+1}
              end, undefined, F).
 fold_idx(Fun, Acc0, F) ->
     fold_idx(Fun, Acc0, 4*1024, F).
