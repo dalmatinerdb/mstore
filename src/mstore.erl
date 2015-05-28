@@ -250,10 +250,10 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
                   true ->
                       MStore;
                   false ->
-                      MStorex = MStore#mstore{metrics=btrie:append(Metric, t, Ms)},
+                      MStorex = MStore#mstore{metrics=btrie:store(Metric, Ms)},
                       file:write_file([MStorex#mstore.dir | "/mstore"],
                                       <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                      [read, append]),
+                                      [read, store]),
                       MStorex
               end,
     CurFiles1 = do_put(MStore1, Metric, Parts1, Value, CurFiles),
@@ -321,7 +321,7 @@ chunks(Dir, Ext) ->
 reindex_chunk(IO, File, Set) ->
     fold_idx(fun({entry, M}, Acc) ->
                      ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
-                     btrie:append(M, t, Acc);
+                     btrie:store(M, Acc);
                 (_, Acc) ->
                      Acc
              end, Set, File).
@@ -353,14 +353,14 @@ open_mfile(F) ->
                 {ok, <<2:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
                                      fun({entry, M}, Acc) ->
-                                             btrie:append(M, t, Acc)
+                                             btrie:store(M, Acc)
                                      end, btrie:new(), R),
                     {ok, FileSize, 8, Set};
                 {ok, <<?VERSION:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE,
                        DataSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
                                      fun({entry, M}, Acc) ->
-                                             btrie:append(M, t, Acc)
+                                             btrie:store(M, Acc)
                                      end, btrie:new(), R),
                     {ok, FileSize, DataSize, Set};
                 {ok, _} ->
@@ -563,12 +563,12 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
         case btrie:find(Metric, Idx) of
             error ->
                 Pos = M#mfile.next,
-                Mx = M#mfile{next=Pos+1, index=btrie:append(Metric, Pos, Idx)},
+                Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
                 file:write_file([M#mfile.name | ".idx"],
                                 <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                [read, append]),
+                                [read, store]),
                 {Mx, Pos*S*DataSize};
-            {ok, [Pos]} ->
+            {ok, Pos} ->
                 {M,Pos*S*DataSize}
         end,
     P = Base+((Position - Offset)*DataSize),
@@ -582,7 +582,7 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx},
     case btrie:find(Metric, Idx) of
         error ->
             {error, not_found};
-        {ok, [Pos]} ->
+        {ok, Pos} ->
             Base = Pos * S * DataSize,
             P = Base+((Position - Offset) * DataSize),
             file:pread(F, P, Count * DataSize)
@@ -676,7 +676,7 @@ read_idx(F) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
                      {Offset, Size, btrie:new(), 0};
                 ({entry, M}, {Offset, Size, T, I}) ->
-                     {Offset, Size, btrie:append(M, I, T), I+1}
+                     {Offset, Size, btrie:store(M, I, T), I+1}
              end, undefined, F).
 fold_idx(Fun, Acc0, F) ->
     fold_idx(Fun, Acc0, 4*1024, F).
@@ -715,4 +715,3 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
             file:close(IO),
             E
     end.
-
