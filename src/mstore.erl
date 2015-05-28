@@ -103,7 +103,7 @@ new(FileSize, DataSize, Dir) ->
             file:make_dir(Dir),
             MStore = #mstore{size=FileSize, dir=Dir,
                              data_size=DataSize},
-            file:write_file(IdxFile, index_header(MStore)),
+            ok = file:write_file(IdxFile, index_header(MStore)),
             {ok, MStore}
     end.
 
@@ -250,10 +250,11 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
                   true ->
                       MStore;
                   false ->
+                      io:format("Storing metric ~p to ~s~n", [Metric, [MStore#mstore.dir | "/mstore"]]),
                       MStorex = MStore#mstore{metrics=btrie:store(Metric, Ms)},
-                      file:write_file([MStorex#mstore.dir | "/mstore"],
+                      ok = file:write_file([MStorex#mstore.dir | "/mstore"],
                                       <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                      [read, store]),
+                                      [read, append]),
                       MStorex
               end,
     CurFiles1 = do_put(MStore1, Metric, Parts1, Value, CurFiles),
@@ -566,7 +567,7 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
                 Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
                 file:write_file([M#mfile.name | ".idx"],
                                 <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                [read, store]),
+                                [read, append]),
                 {Mx, Pos*S*DataSize};
             {ok, Pos} ->
                 {M,Pos*S*DataSize}

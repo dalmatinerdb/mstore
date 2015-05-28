@@ -139,9 +139,15 @@ prop_gb_comp() ->
                         List2 = [{unlist(mmath_bin:to_list(Vs)), Vt} || {{ok, Vs}, Vt} <- List1],
                         List3 = [true || {_V, _V} <- List2],
                         Len = length(List),
-                        length(List1) == Len andalso
+                        Res = length(List1) == Len andalso
                             length(List2) == Len andalso
-                            length(List3) == Len
+                            length(List3) == Len,
+                        ?WHENFAIL(io:format(user,
+                                            "L:  ~p~n"
+                                            "L1: ~p~n"
+                                            "L2: ~p~n"
+                                            "L3: ~p~n", [List, List1, List2, List3]),
+                                  Res)
                     end
                     )).
 
