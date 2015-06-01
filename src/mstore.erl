@@ -163,13 +163,18 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
     Chunks1 = lists:takewhile(fun(C) ->
                                       C =< Before1
                               end, Chunks),
-    [close_store(F) || {_, F} <- Files],
-    [begin
-         F = [Dir, $/, integer_to_list(C), $.],
-         file:delete([F | "mstore"]),
-         file:delete([F | "idx"])
-     end || C <- Chunks1],
-    reindex(MStore#mstore{files = []}).
+    case Chunks1 of
+        [] ->
+            MStore;
+        _ ->
+            [close_store(F) || {_, F} <- Files],
+            [begin
+                 F = [Dir, $/, integer_to_list(C), $.],
+                 file:delete([F | "mstore"]),
+                 file:delete([F | "idx"])
+             end || C <- Chunks1],
+            reindex(MStore#mstore{files = []})
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
