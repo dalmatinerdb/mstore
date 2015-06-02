@@ -255,7 +255,6 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
                   true ->
                       MStore;
                   false ->
-                      io:format("Storing metric ~p to ~s~n", [Metric, [MStore#mstore.dir | "/mstore"]]),
                       MStorex = MStore#mstore{metrics=btrie:store(Metric, Ms)},
                       ok = file:write_file([MStorex#mstore.dir | "/mstore"],
                                       <<(byte_size(Metric)):16/integer, Metric/binary>>,
