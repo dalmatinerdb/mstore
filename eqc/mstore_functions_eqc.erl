@@ -1,6 +1,5 @@
 -module(mstore_functions_eqc).
 
--ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
@@ -37,6 +36,3 @@ prop_incomplete_make_splits() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},
             length([false || {_, C} <-mstore:make_splits(Time, Count, Size, []),
                    C < Size]) =< 2).
-
--include("eqc_helper.hrl").
--endif.

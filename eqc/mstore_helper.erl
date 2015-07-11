@@ -38,4 +38,3 @@ to_bin([{true, V} | R], Acc) when is_integer(V) ->
 
 to_bin([], Acc) ->
     Acc.
-

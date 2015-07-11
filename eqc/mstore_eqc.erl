@@ -38,7 +38,7 @@ reopen(FileSize, Size) ->
 delete(FileSize, Size) ->
         ?LAZY(?LET({{S, T}, O},
                {store(FileSize, Size-1), offset()},
-               {{call, ?MODULE, do_delete, [S, O]},
+               {{call, ?S, delete, [S, O]},
                 {call, ?MODULE, do_delete_t, [O, FileSize, T]}})).
 
 
@@ -50,10 +50,6 @@ store(FileSize, Size) ->
                   [{9, insert(FileSize, Size)},
                    {1, delete(FileSize, Size)},
                    {1, reopen(FileSize, Size)}]) || Size > 0])).
-
-do_delete(Set, Offset) ->
-    {ok, MSet} = mstore:delete(Set, Offset),
-    MSet.
 
 do_delete_t(Offset, FileSize, Tree) ->
     O1 = (Offset div FileSize) * FileSize,
@@ -150,5 +146,3 @@ prop_gb_comp() ->
                                   Res)
                     end
                     )).
-
--include("eqc_helper.hrl").

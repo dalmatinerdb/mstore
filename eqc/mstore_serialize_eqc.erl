@@ -91,5 +91,3 @@ prop_fold_fully() ->
                         ?S:close(C1),
                         lists:sort(L1) == lists:sort(L2)
                     end)).
-
--include("eqc_helper.hrl").

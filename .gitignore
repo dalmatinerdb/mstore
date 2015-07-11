@@ -7,3 +7,5 @@ deps
 *.beam
 *.eqc
 .qcdata
+.qcdata-copy
+_build
