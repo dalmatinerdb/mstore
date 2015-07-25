@@ -1,14 +1,16 @@
-REBAR = $(shell pwd)/rebar
+REBAR = $(shell pwd)/rebar3
 
-.PHONY: deps rel package
+.PHONY: rel package
 
-all: deps compile
+all: compile
+
+publish:
+	$(REBAR) as pkg upgrade
+	$(REBAR) as pkg hex publish
+	$(REBAR) upgrade
 
 compile:
 	$(REBAR) compile
-
-deps:
-	$(REBAR) get-deps
 
 clean:
 	-rm -r .eunit
@@ -18,34 +20,20 @@ distclean: clean
 	$(REBAR) delete-deps
 
 qc: clean all
-	$(REBAR) -C rebar_eqc.config compile eunit skip_deps=true --verbose
-
-eqc-compile: deps compile
-	rm ebin/*
-	(cd test; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {outdir, \"../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
-	(cd src; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {i, \"../include\"}, {outdir, \"../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
-	(cd deps/chash/src; erl -noshell -DEQC -DTEST -eval "make:all([{parse_transform, eqc_cover}, {outdir, \"../../../ebin\"}, {d, 'EQC'}, {d, 'TEST'}])" -s init stop)
-
-test: all
-	-rm -r .eunit
-	$(REBAR) skip_deps=true eunit
-
-bench: all
-	-rm -r .eunit
-	$(REBAR) -D BENCH skip_deps=true eunit
+	$(REBAR) as eqc qc
 
 ###
 ### Docs
 ###
 docs:
-	$(REBAR) skip_deps=true doc
+	$(REBAR) edoc
 
 ##
 ## Developer targets
 ##
 
 xref:
-	$(REBAR) xref skip_deps=true
+	$(REBAR) xref 
 
 console: all
 	erl -pa ebin deps/*/ebin -s libsniffle
