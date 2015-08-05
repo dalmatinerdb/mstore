@@ -158,14 +158,14 @@ delete(MStore = #mstore{dir=Dir}) ->
 
 -spec delete(mstore(), pos_integer()) -> {ok, mstore()}.
 delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
-    Before1 = Before div S,
+    Before1 = ((Before div S) - 1) * S,
     Chunks = chunks(Dir, ".mstore"),
     Chunks1 = lists:takewhile(fun(C) ->
-                                      C =< Before1
+                                      C < Before1
                               end, Chunks),
     case Chunks1 of
         [] ->
-            MStore;
+            {ok, MStore};
         _ ->
             [close_store(F) || {_, F} <- Files],
             [begin
@@ -321,7 +321,7 @@ reindex(MStore = #mstore{dir = Dir}) ->
 
 chunks(Dir, Ext) ->
     lists:sort([list_to_integer(filename:rootname(filename:basename(F))) ||
-                   F <- filelib:wildcard([Dir | "/*." ++ Ext])]).
+                   F <- filelib:wildcard([Dir | "/*" ++ Ext])]).
 
 reindex_chunk(IO, File, Set) ->
     fold_idx(fun({entry, M}, Acc) ->
