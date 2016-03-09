@@ -296,6 +296,8 @@ metrics(#mstore{metrics=M}) ->
 make_splits(Time, Count, Size) ->
     make_splits(Time, Count, Size, []).
 
+-spec reindex(mstore()) -> {ok, mstore()}.
+
 reindex(MStore = #mstore{dir = Dir}) ->
     IdxFileOld = [Dir | "/mstore"],
     IdxFileNew = [Dir | "/mstore.new"],
