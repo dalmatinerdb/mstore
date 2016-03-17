@@ -136,7 +136,7 @@ new(FileSize, DataSize, Dir) ->
         {ok, F, IS,  Metrics} ->
             {ok, #mstore{size=F, dir=Dir, metrics=Metrics, data_size=IS}};
         _ ->
-            file:make_dir(Dir),
+            ok = file:make_dir(Dir),
             MStore = #mstore{size=FileSize, dir=Dir,
                              data_size=DataSize},
             ok = file:write_file(IdxFile, index_header(MStore)),
@@ -183,7 +183,7 @@ delete(MStore = #mstore{dir=Dir}) ->
     {ok, Files} = file:list_dir(Dir),
     Files1 = [[Dir, $/ | File] || File <- Files],
     [file:delete(F) || F <- Files1],
-    file:del_dir(Dir).
+    ok = file:del_dir(Dir).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -604,29 +604,23 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
       is_binary(Value) ->
     %% As part of a write operation, both the index and mstore files may be
     %% updated. There is no atomicity gaurantees, and a fault may occur after
-    %% one of the writes have been processed. This may cause integrity
-    %% constraints to be violated, such as duplicate metric names in the index
-    %% or mis-alignment values in the store. This will lead to errors on
-    %% subsequent read operations, where offsets could be incorrectly
-    %% calculated.  Instead, the more volatile storage write operation is
-    %% attempted first, and the index only updated if this succeeds.
+    %% one of the writes have been processed. Writing data to the index before
+    %% writing to the mstore ensures that offsets are calculated so as not to
+    %% cause data to overlap. In other words, data loss is acceptable, but not
+    %% data corruption.
     WritePoints = fun(Pos) ->
                           Base = Pos*S*DataSize,
                           P = Base+((Position - Offset)*DataSize),
-                          file:pwrite(F, P, Value)
+                          ok = file:pwrite(F, P, Value)
                   end,
 
     case btrie:find(Metric, Idx) of
         error ->
             Pos = M#mfile.next,
-            %% Write to storage BEFORE the append to index
-            R = WritePoints(Pos),
-
             Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
-            file:write_file([M#mfile.name | ".idx"],
-                            <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                            [read, append]),
-            {R, Mx};
+            Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
+            ok = file:write_file([M#mfile.name | ".idx"], Bin, [read, append]),
+            {WritePoints(Pos), Mx};
         {ok, Pos} ->
             {WritePoints(Pos), M}
     end.
