@@ -12,8 +12,6 @@
 %%% Generators
 %%%-------------------------------------------------------------------
 
--define(S, mstore).
--define(G, gb_trees).
 -define(M, <<"metric">>).
 -define(DIR, ".qcdata").
 
@@ -23,8 +21,8 @@ store(FileSize) ->
 insert(FileSize, Size) ->
     ?LAZY(?LET({{S, T}, M, O, V},
                {store(FileSize, Size-1), ?M, offset(), non_z_int()},
-               {{call, ?S, put, [S, M, O, V]},
-                {call, ?G, enter, [O, V, T]}})).
+               {{call, mstore, put, [S, M, O, V]},
+                {call, gb_trees, enter, [O, V, T]}})).
 
 reopen(FileSize, Size) ->
     ?LAZY(?LET({S, T},
@@ -44,8 +42,8 @@ delete(FileSize, Size) ->
 
 store(FileSize, Size) ->
     ?LAZY(oneof(
-            [{{call, ?MODULE, new, [FileSize, ?DIR]}, {call, ?G, empty, []}}
-             || Size == 0]
+            [{{call, ?MODULE, new, [FileSize, ?DIR]},
+              {call, gb_trees, empty, []}} || Size == 0]
             ++ [frequency(
                   [{9, insert(FileSize, Size)},
                    {1, delete(FileSize, Size)},
@@ -57,10 +55,10 @@ do_delete(Old, Offset) ->
 
 do_delete_t(Offset, FileSize, Tree) ->
     O1 = (Offset div FileSize) * FileSize,
-    G = [{T, V} || {T, V} <- ?G:to_list(Tree),
+    G = [{T, V} || {T, V} <- gb_trees:to_list(Tree),
                    T > O1],
     G1 = lists:sort(G),
-    ?G:from_orddict(G1).
+    gb_trees:from_orddict(G1).
 
 do_reindex(Old) ->
     {ok, MSet} = mstore:reindex(Old),
@@ -91,8 +89,10 @@ offset() ->
 string() ->
     ?LET(S, ?SUCHTHAT(L, list(choose($a, $z)), L =/= ""), list_to_binary(S)).
 
-unlist([E]) ->
+unlist(Vs) ->
+    [E] = mmath_bin:to_list(Vs),
     E.
+
 %%%-------------------------------------------------------------------
 %%% Properties
 %%%-------------------------------------------------------------------
@@ -101,12 +101,12 @@ prop_read_write() ->
             {string(), size(), offset(), non_empty_int_list()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
-                {ok, S1} = ?S:new(?DIR, [{file_size, Size}]),
-                S2 = ?S:put(S1, Metric, Time, Data),
-                {ok, Res1} = ?S:get(S2, Metric, Time, length(Data)),
+                {ok, S1} = mstore:new(?DIR, [{file_size, Size}]),
+                S2 = mstore:put(S1, Metric, Time, Data),
+                {ok, Res1} = mstore:get(S2, Metric, Time, length(Data)),
                 Res2 = mmath_bin:to_list(Res1),
-                Metrics = btrie:fetch_keys(?S:metrics(S2)),
-                ?S:delete(S2),
+                Metrics = btrie:fetch_keys(mstore:metrics(S2)),
+                mstore:delete(S2),
                 Res2 == Data andalso
                     Metrics == [Metric]
             end).
@@ -118,13 +118,13 @@ prop_read_len() ->
                      (length(Data) + LengthOffset) > 0,
                      begin
                          os:cmd("rm -r " ++ ?DIR),
-                         {ok, S1} = ?S:new(?DIR, [{file_size, Size}]),
-                         S2 = ?S:put(S1, Metric, Time, Data),
-                         ReadLen = length(Data) + LengthOffset,
-                         ReadTime = Time + TimeOffset,
-                         {ok, Read} = ?S:get(S2, Metric, ReadTime, ReadLen),
-                         ?S:delete(S2),
-                         mmath_bin:length(Read) == ReadLen
+                         {ok, S1} = mstore:new(?DIR, [{file_size, Size}]),
+                         S2 = mstore:put(S1, Metric, Time, Data),
+                         ReadL = length(Data) + LengthOffset,
+                         ReadT = Time + TimeOffset,
+                         {ok, Read} = mstore:get(S2, Metric, ReadT, ReadL),
+                         mstore:delete(S2),
+                         mmath_bin:length(Read) == ReadL
                      end)).
 
 prop_gb_comp() ->
@@ -133,20 +133,20 @@ prop_gb_comp() ->
                     begin
                         os:cmd("rm -r " ++ ?DIR),
                         {S, T} = eval(D),
-                        List = ?G:to_list(T),
-                        List1 = [{?S:get(S, ?M, Time, 1), V} || {Time, V} <- List],
-                        ?S:delete(S),
-                        List2 = [{unlist(mmath_bin:to_list(Vs)), Vt} || {{ok, Vs}, Vt} <- List1],
-                        List3 = [true || {_V, _V} <- List2],
-                        Len = length(List),
-                        Res = length(List1) == Len andalso
-                            length(List2) == Len andalso
-                            length(List3) == Len,
+                        L = gb_trees:to_list(T),
+                        L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
+                        mstore:delete(S),
+                        L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
+                        L3 = [true || {_V, _V} <- L2],
+                        Len = length(L),
+                        Res = length(L1) == Len andalso
+                            length(L2) == Len andalso
+                            length(L3) == Len,
                         ?WHENFAIL(io:format(user,
                                             "L:  ~p~n"
                                             "L1: ~p~n"
                                             "L2: ~p~n"
-                                            "L3: ~p~n", [List, List1, List2, List3]),
+                                            "L3: ~p~n", [L, L1, L2, L3]),
                                   Res)
                     end
                     )).

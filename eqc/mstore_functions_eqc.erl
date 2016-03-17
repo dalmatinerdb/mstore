@@ -24,15 +24,19 @@ offset() ->
 %%%-------------------------------------------------------------------
 %%% Properties
 %%%-------------------------------------------------------------------
-prop_cout_parts() ->
+prop_count_parts() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},
-            lists:sum([C || {_, C} <-mstore:make_splits(Time, Count, Size)]) == Count).
+            lists:sum([C || {_, C} <- splits(Time, Count, Size)]) == Count).
 
 prop_max_size_make_splits() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},
-            length([false || {_, C} <- mstore:make_splits(Time, Count, Size), C > Size]) == 0).
+            length([false || {_, C} <- splits(Time, Count, Size),
+                   C > Size]) == 0).
 
 prop_incomplete_make_splits() ->
     ?FORALL({Size, Time, Count}, {size(), offset(), length()},
-            length([false || {_, C} <-mstore:make_splits(Time, Count, Size),
+            length([false || {_, C} <- splits(Time, Count, Size),
                    C < Size]) =< 2).
+
+splits(Time, Count, Size) ->
+    mstore:make_splits(Time, Count, Size).
