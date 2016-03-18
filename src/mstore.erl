@@ -602,28 +602,28 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
          DataSize, Metric, Position, Value) when
       is_binary(Metric),
       is_binary(Value) ->
+
     %% As part of a write operation, both the index and mstore files may be
     %% updated. There is no atomicity gaurantees, and a fault may occur after
     %% one of the writes have been processed. Writing data to the index before
     %% writing to the mstore ensures that offsets are calculated so as not to
     %% cause data to overlap. In other words, data loss is acceptable, but not
     %% data corruption.
-    WritePoints = fun(Pos) ->
-                          Base = Pos*S*DataSize,
-                          P = Base+((Position - Offset)*DataSize),
-                          ok = file:pwrite(F, P, Value)
-                  end,
-
-    case btrie:find(Metric, Idx) of
-        error ->
-            Pos = M#mfile.next,
-            Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
-            Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
-            ok = file:write_file([M#mfile.name | ".idx"], Bin, [read, append]),
-            {WritePoints(Pos), Mx};
-        {ok, Pos} ->
-            {WritePoints(Pos), M}
-    end.
+    {M1, Base} =
+        case btrie:find(Metric, Idx) of
+            error ->
+                Pos = M#mfile.next,
+                Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
+                Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
+                ok = file:write_file([M#mfile.name | ".idx"], Bin,
+                                     [read, append]),
+                {Mx, Pos*S*DataSize};
+            {ok, Pos} ->
+                {M, Pos*S*DataSize}
+        end,
+    P = Base+((Position - Offset)*DataSize),
+    R = file:pwrite(F, P, Value),
+    {R, M1}.
 
 read(#mfile{offset=Offset, size=S, file=F, index=Idx},
      DataSize, Metric, Position, Count)
