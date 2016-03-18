@@ -660,8 +660,13 @@ serialize_metric(MFile, DataSize, Metric, Fun, infinity, Acc) ->
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
-    {ok, Data} = read(MFile, DataSize, Metric, O, S),
-    serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
+
+    case read(MFile, DataSize, Metric, O, S) of
+        {ok, Data} ->
+            serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
+        eof ->
+            Acc
+    end;
 
 serialize_metric(MFile, DataSize, Metric, Fun, Chunk, Acc) ->
     serialize_metric(MFile, DataSize, Metric, Fun, 0, Chunk, Acc).
