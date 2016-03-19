@@ -9,3 +9,4 @@ deps
 .qcdata
 .qcdata-copy
 _build
+.rebar3
