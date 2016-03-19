@@ -6,6 +6,42 @@
 %%% @end
 %%% Created :  4 Jun 2014 by Heinz Nikolaus Gies <heinz@licenser.net>
 %%%-------------------------------------------------------------------
+
+%% @doc An mstore instance is per directory, consisting of multiple `mstore'
+%% and `idx' files. Data points are stored according to their timestamp, and
+%% stores typically retain up to one week's (depends on `file_size') worth of
+%% data. One master `mstore' file will be created for all metric paths in the
+%% directory, and is used for coverage queries.
+%%
+%% Index (`idx') files are keyed on and offset position and consist of metric
+%% names.  These metrics are used to calculate the relative position of a
+%% metric's values in the `mstore' storage file.
+%%
+%% The format of an `idx' file is as follows, where `M..' are metric paths:
+%% +--------+-----------+----------+----+----------+----+-----+----------+----+
+%% | Offset | File Size | Size(M1) | M1 | Size(M2) | M2 | ... | Size(Mn) | Mn |
+%% +--------+-----------+----------+----+----------+----+-----+----------+----+
+%%                      |---- Pos 0 ----|---- Pos 2 ----|     |---- Pos n ----|
+%%
+%% Metric names are appended to the index the first time that they are
+%% encountered.
+%%
+%% Storage (mstore) files may store values for more than one metric at a time,
+%% and is segmented sequentially.  The position for a value within a
+%% segment is calculated as follows: P = Base + ((TS - Offset) * Data size),
+%% where Base is a function of the metric's position in the index:
+%% +-------------+-----+------------------------------------------------+
+%% | Pos(M1) = 0 | --> | Base = 0 X File size X Data size = 0           |
+%% | Pos(M2) = 1 | --> | Base = 1 X File size X Data size = 4838400     |
+%% | ...         |     |                                                |
+%% | Pos(Mn) = N | --> | Base = N X File size X Data size = N * 4838400 |
+%% +-------------+-----+------------------------------------------------+
+%%
+%% Only one process should open the mstore for writing at a given time. At any
+%% moment, up to two `mstore' files may be open for writing by the mstore.
+%% These files represent the current and previously written to files e.g. the
+%% current and previous week.
+
 -module(mstore).
 
 -export([
@@ -100,7 +136,7 @@ new(FileSize, DataSize, Dir) ->
         {ok, F, IS,  Metrics} ->
             {ok, #mstore{size=F, dir=Dir, metrics=Metrics, data_size=IS}};
         _ ->
-            file:make_dir(Dir),
+            ok = file:make_dir(Dir),
             MStore = #mstore{size=FileSize, dir=Dir,
                              data_size=DataSize},
             ok = file:write_file(IdxFile, index_header(MStore)),
@@ -147,7 +183,7 @@ delete(MStore = #mstore{dir=Dir}) ->
     {ok, Files} = file:list_dir(Dir),
     Files1 = [[Dir, $/ | File] || File <- Files],
     [file:delete(F) || F <- Files1],
-    file:del_dir(Dir).
+    ok = file:del_dir(Dir).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -566,17 +602,24 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
          DataSize, Metric, Position, Value) when
       is_binary(Metric),
       is_binary(Value) ->
+
+    %% As part of a write operation, both the index and mstore files may be
+    %% updated. There is no atomicity gaurantees, and a fault may occur after
+    %% one of the writes have been processed. Writing data to the index before
+    %% writing to the mstore ensures that offsets are calculated so as not to
+    %% cause data to overlap. In other words, data loss is acceptable, but not
+    %% data corruption.
     {M1, Base} =
         case btrie:find(Metric, Idx) of
             error ->
                 Pos = M#mfile.next,
                 Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
-                file:write_file([M#mfile.name | ".idx"],
-                                <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                [read, append]),
+                Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
+                ok = file:write_file([M#mfile.name | ".idx"], Bin,
+                                     [read, append]),
                 {Mx, Pos*S*DataSize};
             {ok, Pos} ->
-                {M,Pos*S*DataSize}
+                {M, Pos*S*DataSize}
         end,
     P = Base+((Position - Offset)*DataSize),
     R = file:pwrite(F, P, Value),
@@ -617,8 +660,13 @@ serialize_metric(MFile, DataSize, Metric, Fun, infinity, Acc) ->
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
-    {ok, Data} = read(MFile, DataSize, Metric, O, S),
-    serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
+
+    case read(MFile, DataSize, Metric, O, S) of
+        {ok, Data} ->
+            serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
+        eof ->
+            Acc
+    end;
 
 serialize_metric(MFile, DataSize, Metric, Fun, Chunk, Acc) ->
     serialize_metric(MFile, DataSize, Metric, Fun, 0, Chunk, Acc).
