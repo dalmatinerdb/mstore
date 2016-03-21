@@ -136,7 +136,7 @@ new(FileSize, DataSize, Dir) ->
         {ok, F, IS,  Metrics} ->
             {ok, #mstore{size=F, dir=Dir, metrics=Metrics, data_size=IS}};
         _ ->
-            ok = file:make_dir(Dir),
+            file:make_dir(Dir),
             MStore = #mstore{size=FileSize, dir=Dir,
                              data_size=DataSize},
             ok = file:write_file(IdxFile, index_header(MStore)),
@@ -183,7 +183,7 @@ delete(MStore = #mstore{dir=Dir}) ->
     {ok, Files} = file:list_dir(Dir),
     Files1 = [[Dir, $/ | File] || File <- Files],
     [file:delete(F) || F <- Files1],
-    ok = file:del_dir(Dir).
+    file:del_dir(Dir).
 
 %%--------------------------------------------------------------------
 %% @doc
