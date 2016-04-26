@@ -1,9 +1,9 @@
 {application,mstore,
              [{description,"Fast, flat metric store."},
-              {vsn,"0.1.10"},
+              {vsn,"0.1.11"},
               {registered,[]},
               {applications,[kernel,stdlib,mmath,trie]},
               {env,[]},
-              {contributors,["Heinz N. Gies"]},
+              {maintainer,["Heinz N. Gies"]},
               {licenses,["MIT"]},
               {links,[{"Github","https://github.com/dalmatinerdb/mstore"}]}]}.
