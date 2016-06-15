@@ -56,6 +56,8 @@
          read_idx/1,
          put/4,
          metrics/1,
+         count/1,
+         file_size/1,
          fold/3, fold/4,
          make_splits/3]).
 -export_type([mstore/0]).
@@ -314,6 +316,32 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
 metrics(#mstore{metrics=M}) ->
     M.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns the chunk in the mstore, each metric row in a file is a
+%% chunk. So the total is the sum of the metrics in each file.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec count(mstore()) -> non_neg_integer().
+count(#mstore{dir=Dir}) ->
+    count(Dir);
+count(Dir) when is_list(Dir) ->
+    {ok, Fs} = file:list_dir(Dir),
+    Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
+    Idxs = [[Dir, $/, I] || [I, "idx"] <- Fs1],
+    lists:foldl(fun(File, Cnt) ->
+                        Cnt + count_idx([File | ".idx"])
+                end, 0, Idxs).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns the File Size of a store
+%% @end
+%%--------------------------------------------------------------------
+-spec file_size(mstore()) -> non_neg_integer().
+file_size(#mstore{size = FileSize}) ->
+    FileSize.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -735,6 +763,14 @@ read_idx(F) ->
                 ({entry, M}, {Offset, Size, T, I}) ->
                      {Offset, Size, btrie:store(M, I, T), I+1}
              end, undefined, F).
+
+count_idx(F) ->
+    fold_idx(fun({init, _Offset, _Size}, Acc) ->
+                     Acc;
+                ({entry, _M}, Acc) ->
+                     Acc + 1
+             end, 0, F).
+
 fold_idx(Fun, Acc0, F) ->
     fold_idx(Fun, Acc0, 4*1024, F).
 
