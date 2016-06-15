@@ -91,3 +91,25 @@ prop_fold_fully() ->
                         ?S:close(C1),
                         lists:sort(L1) == lists:sort(L2)
                     end)).
+
+
+prop_count() ->
+    ?FORALL(FileSize, size(),
+            ?FORALL(D, store(FileSize),
+                    begin
+                        os:cmd("rm -r " ++ ?DIR ++"-copy"),
+                        os:cmd("rm -r " ++ ?DIR),
+                        Store = eval(D),
+                        Count = mstore:count(Store),
+                        FoldFn = fun(M, T, _, {M, F, Cnt})
+                                    when T div FileSize == F->
+                                         {M, F, Cnt};
+                                    (M, T, _, {_, _, Cnt}) ->
+                                         {M, T div FileSize, Cnt + 1}
+                                 end,
+                        {_, _, Count2} = ?S:fold(Store, FoldFn, {undefined, 0, 0}),
+                        ?S:close(Store),
+                        ?WHENFAIL(io:format(user, "cont():~p /= fold():~p~n",
+                                            [Count, Count2]),
+                                  Count == Count2)
+                    end)).
