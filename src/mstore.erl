@@ -52,6 +52,8 @@
          delete/2,
          reindex/1,
          get/4,
+         open_mfile/1,
+         read_idx/1,
          put/4,
          metrics/1,
          count/1,
