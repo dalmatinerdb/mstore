@@ -329,9 +329,7 @@ count(Dir) when is_list(Dir) ->
     Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
     Idxs = [[Dir, $/, I] || [I, "idx"] <- Fs1],
     lists:foldl(fun(File, Cnt) ->
-                        {_Offset, _Size, Idx, _Next}
-                            = read_idx([File | ".idx"]),
-                        Cnt + btrie:size(Idx)
+                        Cnt + count_idx([File | ".idx"])
                 end, 0, Idxs).
 
 %%--------------------------------------------------------------------
@@ -763,6 +761,14 @@ read_idx(F) ->
                 ({entry, M}, {Offset, Size, T, I}) ->
                      {Offset, Size, btrie:store(M, I, T), I+1}
              end, undefined, F).
+
+count_idx(F) ->
+    fold_idx(fun({init, _Offset, _Size}, Acc) ->
+                     Acc;
+                ({entry, _M}, Acc) ->
+                     Acc + 1
+             end, 0, F).
+
 fold_idx(Fun, Acc0, F) ->
     fold_idx(Fun, Acc0, 4*1024, F).
 
