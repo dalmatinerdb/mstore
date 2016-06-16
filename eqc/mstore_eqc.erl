@@ -15,39 +15,41 @@
 -define(M, <<"metric">>).
 -define(DIR, ".qcdata").
 
-store(FileSize) ->
-    ?SIZED(Size, store(FileSize, Size)).
+store(FileSize, MaxFiles) ->
+    ?SIZED(Size, store(FileSize, Size, MaxFiles)).
 
-insert(FileSize, Size) ->
+max_files() ->
+    2. %%non_neg_int().
+
+insert(FileSize, Size, MaxFiles) ->
     ?LAZY(?LET({{S, T}, M, O, V},
-               {store(FileSize, Size-1), ?M, offset(), non_z_int()},
+               {store(FileSize, Size-1, MaxFiles), ?M, offset(), non_z_int()},
                {{call, mstore, put, [S, M, O, V]},
                 {call, gb_trees, enter, [O, V, T]}})).
 
-reopen(FileSize, Size) ->
+reopen(FileSize, Size, MaxFiles) ->
     ?LAZY(?LET({S, T},
-               store(FileSize, Size-1),
+               store(FileSize, Size-1, MaxFiles),
                {oneof(
-                  [
-                   {call, ?MODULE, do_reindex, [S]},
-                   {call, ?MODULE, renew, [S, FileSize, ?DIR]},
-                   {call, ?MODULE, do_reopen, [S, ?DIR]}]), T})).
+                  [{call, ?MODULE, do_reindex, [S]},
+                   {call, ?MODULE, renew, [S, FileSize, max_files(), ?DIR]},
+                   {call, ?MODULE, do_reopen, [S, max_files(), ?DIR]}]), T})).
 
-delete(FileSize, Size) ->
-        ?LAZY(?LET({{S, T}, O},
-               {store(FileSize, Size-1), offset()},
+delete(FileSize, Size, MaxFiles) ->
+    ?LAZY(?LET({{S, T}, O},
+               {store(FileSize, Size-1, MaxFiles), offset()},
                {{call, ?MODULE, do_delete, [S, O]},
                 {call, ?MODULE, do_delete_t, [O, FileSize, T]}})).
 
 
-store(FileSize, Size) ->
+store(FileSize, Size, MaxFiles) ->
     ?LAZY(oneof(
-            [{{call, ?MODULE, new, [FileSize, ?DIR]},
+            [{{call, ?MODULE, new, [FileSize, MaxFiles, ?DIR]},
               {call, gb_trees, empty, []}} || Size == 0]
             ++ [frequency(
-                  [{9, insert(FileSize, Size)},
-                   {1, delete(FileSize, Size)},
-                   {1, reopen(FileSize, Size)}]) || Size > 0])).
+                  [{9, insert(FileSize, Size, MaxFiles)},
+                   {1, delete(FileSize, Size, MaxFiles)},
+                   {1, reopen(FileSize, Size, MaxFiles)}]) || Size > 0])).
 
 do_delete(Old, Offset) ->
     {ok, MSet} = mstore:delete(Old, Offset),
@@ -64,17 +66,18 @@ do_reindex(Old) ->
     {ok, MSet} = mstore:reindex(Old),
     MSet.
 
-do_reopen(Old, Dir) ->
+do_reopen(Old, MaxFiles, Dir) ->
     ok = mstore:close(Old),
-    {ok, MSet} = mstore:open(Dir),
+    {ok, MSet} = mstore:open(Dir, [{max_files, MaxFiles}]),
     MSet.
 
-renew(Old, FileSize, Dir) ->
+renew(Old, FileSize, MaxFiles, Dir) ->
     ok = mstore:close(Old),
-    new(FileSize, Dir).
+    new(FileSize, MaxFiles, Dir).
 
-new(FileSize, Dir) ->
-    {ok, MSet} = mstore:new(Dir, [{file_size, FileSize}]),
+new(FileSize, MaxFiles, Dir) ->
+    {ok, MSet} = mstore:new(Dir, [{file_size, FileSize},
+                                  {max_files, MaxFiles}]),
     MSet.
 
 non_z_int() ->
@@ -115,7 +118,7 @@ prop_read_len() ->
     ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset},
             {string(), size(), offset(), non_empty_int_list(), int(), int()},
             ?IMPLIES((Time + TimeOffset) > 0 andalso
-                     (length(Data) + LengthOffset) > 0,
+                                               (length(Data) + LengthOffset) > 0,
                      begin
                          os:cmd("rm -r " ++ ?DIR),
                          {ok, S1} = mstore:new(?DIR, [{file_size, Size}]),
@@ -128,25 +131,27 @@ prop_read_len() ->
                      end)).
 
 prop_gb_comp() ->
-    ?FORALL(FileSize, size(),
-            ?FORALL(D, store(FileSize),
-                    begin
-                        os:cmd("rm -r " ++ ?DIR),
-                        {S, T} = eval(D),
-                        L = gb_trees:to_list(T),
-                        L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
-                        mstore:delete(S),
-                        L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
-                        L3 = [true || {_V, _V} <- L2],
-                        Len = length(L),
-                        Res = length(L1) == Len andalso
-                            length(L2) == Len andalso
-                            length(L3) == Len,
-                        ?WHENFAIL(io:format(user,
-                                            "L:  ~p~n"
-                                            "L1: ~p~n"
-                                            "L2: ~p~n"
-                                            "L3: ~p~n", [L, L1, L2, L3]),
-                                  Res)
-                    end
-                    )).
+    ?FORALL({FileSize, MaxFiles}, {size(), max_files()},
+            begin
+                ?FORALL(D, store(FileSize, MaxFiles),
+                        begin
+                            os:cmd("rm -r " ++ ?DIR),
+                            {S, T} = eval(D),
+                            L = gb_trees:to_list(T),
+                            L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
+                            mstore:delete(S),
+                            L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
+                            L3 = [true || {_V, _V} <- L2],
+                            Len = length(L),
+                            Res = length(L1) == Len andalso
+                                length(L2) == Len andalso
+                                length(L3) == Len,
+                            ?WHENFAIL(io:format(user,
+                                                "L:  ~p~n"
+                                                "L1: ~p~n"
+                                                "L2: ~p~n"
+                                                "L3: ~p~n", [L, L1, L2, L3]),
+                                      Res)
+                        end
+                       )
+            end).

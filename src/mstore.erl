@@ -47,6 +47,7 @@
 -export([
          new/2,
          open/1,
+         open/2,
          close/1,
          delete/1,
          delete/2,
@@ -88,6 +89,7 @@
 
 -record(mstore, {
           size,
+          max_files = 2,
           files=[],
           dir,
           data_size = ?DATA_SIZE,
@@ -95,6 +97,13 @@
          }).
 
 -opaque mstore() :: #mstore{}.
+
+-type open_opt() ::
+        {max_files, pos_integer()}.
+
+-type new_opt() ::
+        {file_size, pos_integer()} |
+        {data_size, pos_integer()}.
 
 -type fold_fun() :: fun((Metric :: binary(),
                          Offset :: non_neg_integer(),
@@ -110,19 +119,18 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec new(Dir :: string() | binary(),
-          Opts :: [{file_size, pos_integer()} |
-                   {data_size, pos_integer()}]) ->
+          Opts :: [new_opt() | open_opt()]) ->
                  {ok, mstore()} |
                  {error, filesize_missmatch}.
 
 new(Dir, Opts) when (is_list(Dir) orelse is_binary(Dir)) , is_list(Opts) ->
     {file_size, FileSize} = proplists:lookup(file_size, Opts),
-    case proplists:get_value(data_size, Opts) of
-        undefined ->
-            new(FileSize, ?DATA_SIZE, Dir);
-        DataSize ->
-
-            new(FileSize, DataSize, Dir)
+    DataSize = proplists:get_value(data_size, Opts, ?DATA_SIZE),
+    case new(FileSize, DataSize, Dir) of
+        {ok, M} ->
+            {ok, apply_opts(M, Opts)};
+        E ->
+            E
     end.
 
 new(FileSize, DataSize, Dir) when
@@ -153,16 +161,20 @@ new(FileSize, DataSize, Dir) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec open(Dir :: string()) -> {ok, mstore()} | {error, not_found}.
-
 open(Dir) ->
+    open(Dir, []).
+
+-spec open(Dir :: string(), [open_opt()]) ->
+                  {ok, mstore()} | {error, not_found}.
+open(Dir, Opts) ->
     case open_mfile([Dir | "/mstore"]) of
         {ok, FileSize, DataSize, Metrics} ->
-            {ok, #mstore{size=FileSize, dir=Dir, data_size = DataSize,
-                         metrics=Metrics}};
+            M =  #mstore{size=FileSize, dir=Dir, data_size = DataSize,
+                         metrics=Metrics},
+            {ok, apply_opts(M, Opts)};
         E ->
             E
     end.
-
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -303,7 +315,7 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
               end,
     CurFiles1 = do_put(MStore1, Metric, Parts1, Value, CurFiles),
     ?DT_WRITE_RETURN,
-    MStore1#mstore{files = CurFiles1}.
+    limit_files(MStore1#mstore{files = CurFiles1}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -386,6 +398,14 @@ reindex(MStore = #mstore{dir = Dir}) ->
 %%====================================================================
 %% Private functions.
 %%====================================================================
+
+apply_opts(MStore, []) ->
+    MStore;
+apply_opts(MStore, [{max_files, N} | R]) when is_integer(N), N >= 0 ->
+    apply_opts(MStore#mstore{max_files = N}, R);
+apply_opts(MStore, [_ | R]) ->
+    apply_opts(MStore, R).
+
 
 chunks(Dir, Ext) ->
     lists:sort([list_to_integer(filename:rootname(filename:basename(F))) ||
@@ -479,7 +499,7 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
 
 do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
        [{Time, Size} | R], InData,
-       Files) when length(Files) < 2 ->
+       Files) when length(Files) =< 2 ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     Base = [D, $/, integer_to_list(FileBase)],
@@ -487,9 +507,16 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     {ok, F2} = write(F1, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
+limit_files(MStore = #mstore{max_files = MaxFiles,
+                             files = CurFiles = [First, {_FileBase, F} | R]})
+  when length(CurFiles) > MaxFiles ->
+    close_store(F),
+    limit_files(MStore#mstore{files = [First | R]});
+limit_files(MStore) ->
+    MStore.
+
 do_get(_, _, _, _, _, [], Acc) ->
     {ok, Acc};
-
 
 do_get(S, [{FileBase, F} | _] = FS,
        Dir, DataSize, Metric, [{Time, Count} | R], Acc)
