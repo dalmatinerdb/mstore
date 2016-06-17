@@ -512,6 +512,11 @@ limit_files(MStore = #mstore{max_files = MaxFiles,
   when length(CurFiles) > MaxFiles ->
     close_store(F),
     limit_files(MStore#mstore{files = [First | R]});
+limit_files(MStore = #mstore{max_files = MaxFiles,
+                             files = CurFiles = [{_FileBase, F} | R]})
+  when length(CurFiles) > MaxFiles ->
+    close_store(F),
+    limit_files(MStore#mstore{files = R});
 limit_files(MStore) ->
     MStore.
 

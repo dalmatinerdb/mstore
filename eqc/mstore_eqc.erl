@@ -19,7 +19,7 @@ store(FileSize, MaxFiles) ->
     ?SIZED(Size, store(FileSize, Size, MaxFiles)).
 
 max_files() ->
-    2. %%non_neg_int().
+    non_neg_int().
 
 insert(FileSize, Size, MaxFiles) ->
     ?LAZY(?LET({{S, T}, M, O, V},
