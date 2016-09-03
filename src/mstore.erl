@@ -196,10 +196,14 @@ close(#mstore{files=Files}) ->
 
 delete(MStore = #mstore{dir=Dir}) ->
     close(MStore),
-    {ok, Files} = file:list_dir(Dir),
-    Files1 = [[Dir, $/ | File] || File <- Files],
-    [file:delete(F) || F <- Files1],
-    file:del_dir(Dir).
+    case file:list_dir(Dir) of
+        {ok, Files} ->
+            Files1 = [[Dir, $/ | File] || File <- Files],
+            [file:delete(F) || F <- Files1],
+            file:del_dir(Dir);
+        {error, enoent} ->
+            ok
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
