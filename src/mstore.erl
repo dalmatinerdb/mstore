@@ -160,7 +160,8 @@ new(FileSize, DataSize, Dir) ->
 %% Opens an existing set.
 %% @end
 %%--------------------------------------------------------------------
--spec open(Dir :: string()) -> {ok, mstore()} | {error, not_found}.
+-spec open(Dir :: string()) ->
+                  {ok, mstore()} | {error, enoent | not_found}.
 open(Dir) ->
     open(Dir, []).
 
@@ -808,7 +809,7 @@ count_idx(F) ->
                  end, 0, F),
     case R of
         {error, invalid_file} ->
-            lager:error("Could not read index file: ~p"),
+            lager:error("Could not read index file: ~p", [F]),
             0;
         N ->
             N
