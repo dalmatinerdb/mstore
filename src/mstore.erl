@@ -808,7 +808,7 @@ count_idx(F) ->
                  end, 0, F),
     case R of
         {error, invalid_file} ->
-            lager:error("Ceould not read index file: ~p"),
+            lager:error("Could not read index file: ~p"),
             0;
         N ->
             N
