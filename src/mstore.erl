@@ -801,11 +801,18 @@ read_idx(F) ->
              end, undefined, F).
 
 count_idx(F) ->
-    fold_idx(fun({init, _Offset, _Size}, Acc) ->
-                     Acc;
-                ({entry, _M}, Acc) ->
-                     Acc + 1
-             end, 0, F).
+    R = fold_idx(fun({init, _Offset, _Size}, Acc) ->
+                         Acc;
+                    ({entry, _M}, Acc) ->
+                         Acc + 1
+                 end, 0, F),
+    case R of
+        {error, invalid_file} ->
+            lager:error("Ceould not read index file: ~p"),
+            0;
+        N ->
+            N
+    end.
 
 fold_idx(Fun, Acc0, F) ->
     fold_idx(Fun, Acc0, 4*1024, F).
