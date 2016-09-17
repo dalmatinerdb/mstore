@@ -161,12 +161,12 @@ new(FileSize, DataSize, Dir) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec open(Dir :: string()) ->
-                  {ok, mstore()} | {error, enoent | not_found}.
+                  {ok, mstore()} | {error, enoent | not_found | invalid_file}.
 open(Dir) ->
     open(Dir, []).
 
 -spec open(Dir :: string(), [open_opt()]) ->
-                  {ok, mstore()} | {error, not_found}.
+                  {ok, mstore()} | {error, enoent | not_found | invalid_file}.
 open(Dir, Opts) ->
     case open_mfile([Dir | "/mstore"]) of
         {ok, FileSize, DataSize, Metrics} ->
