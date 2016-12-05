@@ -54,7 +54,6 @@
          reindex/1,
          get/4,
          open_mfile/1,
-         read_idx/1,
          put/4,
          metrics/1,
          count/1,
@@ -78,15 +77,6 @@
 -compile(export_all).
 -endif.
 
--record(mfile, {
-          name,
-          file,
-          offset,
-          size,
-          index = btrie:new(),
-          next = 0
-         }).
-
 -record(mstore, {
           size,
           max_files = 2,
@@ -104,10 +94,6 @@
 -type new_opt() ::
         {file_size, pos_integer()} |
         {data_size, pos_integer()}.
-
--type fold_fun() :: fun((Metric :: binary(),
-                         Offset :: non_neg_integer(),
-                         Data :: binary(), AccIn :: any()) -> AccOut :: any()).
 
 %%--------------------------------------------------------------------
 %% Public API
@@ -185,7 +171,7 @@ open(Dir, Opts) ->
 -spec close(mstore()) -> ok.
 
 close(#mstore{files=Files}) ->
-    [close_store(S) || {_, S} <- Files],
+    [mfile:close(S) || {_, S} <- Files],
     ok.
 
 %%--------------------------------------------------------------------
@@ -224,7 +210,7 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
         [] ->
             {ok, MStore};
         _ ->
-            [close_store(F) || {_, F} <- Files],
+            [mfile:close(F) || {_, F} <- Files],
             [begin
                  F = [Dir, $/, integer_to_list(C), $.],
                  file:delete([F | "mstore"]),
@@ -265,7 +251,7 @@ get(#mstore{size=S, files=FS, dir=Dir, data_size=DataSize},
 %% @end
 %%--------------------------------------------------------------------
 
--spec fold(mstore(), FoldFun :: fold_fun(), AccIn :: any()) ->
+-spec fold(mstore(), FoldFun :: mfile:fold_fun(), AccIn :: any()) ->
                   AccOut :: any().
 fold(MStore, FoldFun, Acc) ->
     fold(MStore, FoldFun, infinity, Acc).
@@ -277,7 +263,8 @@ fold(MStore, FoldFun, Acc) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec fold(mstore(), FoldFun :: fold_fun(), ChunkSize :: pos_integer() | infinity,
+-spec fold(mstore(), FoldFun :: mfile:fold_fun(), 
+           ChunkSize :: pos_integer() | infinity,
            AccIn :: any()) ->
                   AccOut :: any().
 fold(#mstore{dir=Dir, data_size = DataSize}, Fun, Chunk, Acc) ->
@@ -344,12 +331,10 @@ metrics(#mstore{metrics=M}) ->
 count(#mstore{dir=Dir}) ->
     count(Dir);
 count(Dir) when is_list(Dir) ->
-    {ok, Fs} = file:list_dir(Dir),
-    Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
-    Idxs = [[Dir, $/, I] || [I, "idx"] <- Fs1],
-    lists:foldl(fun(File, Cnt) ->
-                        Cnt + count_idx([File | ".idx"])
-                end, 0, Idxs).
+    Names = list_mfiles(Dir),
+    lists:foldl(fun(N, Cnt) ->
+                        Cnt + mfile:count(N)
+                end, 0, Names).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -385,7 +370,7 @@ reindex(MStore = #mstore{dir = Dir}) ->
     IdxFileOld = [Dir | "/mstore"],
     IdxFileNew = [Dir | "/mstore.new"],
 
-    Files = filelib:wildcard([Dir | "/*.idx"]),
+    Files = list_mfiles(Dir),
     {ok, IO} = file:open(IdxFileNew, [write | ?OPTS]),
     ok = file:write(IO, index_header(MStore)),
     Metrics = lists:foldl(fun (F, Set) ->
@@ -417,7 +402,7 @@ chunks(Dir, Ext) ->
                    F <- filelib:wildcard([Dir | "/*" ++ Ext])]).
 
 reindex_chunk(IO, File, Set) ->
-    fold_idx(fun({entry, M}, Acc) ->
+    mfile:fold_idx(fun({entry, M}, Acc) ->
                      ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
                      btrie:store(M, Acc);
                 (_, Acc) ->
@@ -439,9 +424,6 @@ make_splits(Time, Count, Size, Acc) ->
             Inc = Size-D,
             make_splits(Time + Inc, Count - Inc, Size, [{Time, Inc} | Acc])
     end.
-
-store_metrics(#mfile{index=M}) ->
-    btrie:fetch_keys(M).
 
 open_mfile(F) ->
     Chunk = 4*1024,
@@ -480,7 +462,7 @@ do_put(MStore = #mstore{size=S, data_size = DataSize}, Metric,
        [{FileBase, F} | FileRest]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
-    {ok, F1} = write(F, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:write(F, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F1} | FileRest]);
 
 do_put(MStore = #mstore{size=S, data_size = DataSize}, Metric,
@@ -488,7 +470,7 @@ do_put(MStore = #mstore{size=S, data_size = DataSize}, Metric,
        [First, {FileBase, F}]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
-    {ok, F1} = write(F, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:write(F, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F1}, First]);
 
 do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
@@ -496,10 +478,10 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
        [First, {_Other, F}]) ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
-    close_store(F),
+    mfile:close(F),
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = open(Base, FileBase, S, write),
-    {ok, F2} = write(F1, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:open(Base, FileBase, S, write),
+    {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2}, First]);
 
 do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
@@ -508,19 +490,19 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = open(Base, FileBase, S, write),
-    {ok, F2} = write(F1, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:open(Base, FileBase, S, write),
+    {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
 limit_files(MStore = #mstore{max_files = MaxFiles,
                              files = CurFiles = [First, {_FileBase, F} | R]})
   when length(CurFiles) > MaxFiles ->
-    close_store(F),
+    mfile:close(F),
     limit_files(MStore#mstore{files = [First | R]});
 limit_files(MStore = #mstore{max_files = MaxFiles,
                              files = CurFiles = [{_FileBase, F} | R]})
   when length(CurFiles) > MaxFiles ->
-    close_store(F),
+    mfile:close(F),
     limit_files(MStore#mstore{files = R});
 limit_files(MStore) ->
     MStore.
@@ -531,7 +513,7 @@ do_get(_, _, _, _, _, [], Acc) ->
 do_get(S, [{FileBase, F} | _] = FS,
        Dir, DataSize, Metric, [{Time, Count} | R], Acc)
   when ((Time div S)*S) =:= FileBase ->
-    case read(F, DataSize, Metric, Time, Count) of
+    case mfile:read(F, DataSize, Metric, Time, Count) of
         {ok, D} ->
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
@@ -556,7 +538,7 @@ do_get(S,
        [_, {FileBase, F}] = FS,
        Dir, DataSize, Metric, [{Time, Count} | R], Acc)
   when ((Time div S)*S) =:= FileBase ->
-    case read(F, DataSize, Metric, Time, Count) of
+    case mfile:read(F, DataSize, Metric, Time, Count) of
         {ok, D} ->
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
@@ -580,10 +562,10 @@ do_get(S,
 do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
     Base = [Dir, "/", integer_to_list(FileBase)],
-    {ok, F} = open(Base, FileBase, S, read),
-    case read(F, DataSize, Metric, Time, Count) of
+    {ok, F} = mfile:open(Base, FileBase, S, read),
+    case mfile:read(F, DataSize, Metric, Time, Count) of
         {ok, D} ->
-            close_store(F),
+            mfile:close(F),
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
                        L when L < Count ->
@@ -594,244 +576,24 @@ do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
                    end,
             do_get(S, FS, Dir, DataSize, Metric, R, Acc2);
         {error,not_found} ->
-            close_store(F),
+            mfile:close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, DataSize, Metric, R, Acc1);
         eof ->
-            close_store(F),
+            mfile:close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, DataSize, Metric, R, Acc1);
         E ->
-            close_store(F),
+            mfile:close(F),
             E
     end.
 
-close_store(#mfile{file=F}) ->
-    file:close(F).
-
-open(File, Offset, Size, Mode) ->
-    FileOpts = case Mode of
-                   read ->
-                       [read | ?OPTS];
-                   write ->
-                       [read, write | ?OPTS]
-               end,
-    IdxFile = [File | ".idx"],
-    case read_idx(IdxFile) of
-        {O, S, Idx, Next} when Offset =:= O,
-                         Size =:= S ->
-            case file:open([File | ".mstore"], FileOpts) of
-                {ok, F} ->
-                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next}};
-                E ->
-                    E
-            end;
-        {O, _, _, _} when Offset =/= O ->
-            {error, offset_missmatch};
-        {_, S, _, _} when Size =/= S ->
-            {error, size_missmatch};
-        _E ->
-            case file:open([File |".mstore"], [read, write | ?OPTS]) of
-                {ok, F} ->
-                    M = #mfile{name=File, file=F, offset=Offset,
-                               size=Size, next=0},
-                    file:write_file(IdxFile,
-                                    <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
-                    {ok, M};
-                E ->
-                    E
-            end
-    end.
-
-open_store(File) ->
-    case read_idx([File | ".idx"]) of
-        {Offset, Size, Idx, Next} ->
-            case file:open([File | ".mstore"], [read | ?OPTS]) of
-                {ok, F} ->
-                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next}};
-                E ->
-                    E
-            end;
-        E ->
-            E
-    end.
-
-write(M=#mfile{offset=Offset, size=S},
-      DataSize, Metric, Position, Value)
-  when is_binary(Value),
-       Position >= Offset,
-       (Position - Offset) + (byte_size(Value) div DataSize) =< S ->
-    do_write(M, DataSize, Metric, Position, Value).
-
-do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
-         DataSize, Metric, Position, Value) when
-      is_binary(Metric),
-      is_binary(Value) ->
-
-    %% As part of a write operation, both the index and mstore files may be
-    %% updated. There is no atomicity gaurantees, and a fault may occur after
-    %% one of the writes have been processed. Writing data to the index before
-    %% writing to the mstore ensures that offsets are calculated so as not to
-    %% cause data to overlap. In other words, data loss is acceptable, but not
-    %% data corruption.
-    {M1, Base} =
-        case btrie:find(Metric, Idx) of
-            error ->
-                Pos = M#mfile.next,
-                Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
-                Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                ok = file:write_file([M#mfile.name | ".idx"], Bin,
-                                     [read, append]),
-                {Mx, Pos*S*DataSize};
-            {ok, Pos} ->
-                {M, Pos*S*DataSize}
-        end,
-    P = Base+((Position - Offset)*DataSize),
-    R = file:pwrite(F, P, Value),
-    {R, M1}.
-
-read(#mfile{offset=Offset, size=S, file=F, index=Idx},
-     DataSize, Metric, Position, Count)
-  when Position >= Offset,
-       (Position - Offset) + Count =< S ->
-    case btrie:find(Metric, Idx) of
-        error ->
-            {error, not_found};
-        {ok, Pos} ->
-            Base = Pos * S * DataSize,
-            P = Base+((Position - Offset) * DataSize),
-            file:pread(F, P, Count * DataSize)
-    end.
 
 serialize_dir(Dir, DataSize, Fun, Chunk, Acc) ->
-    {ok, Fs} = file:list_dir(Dir),
-    Fs1 = [re:split(F, "\\.", [{return, list}]) || F <- Fs],
-    Idxs = [I || [I, "idx"] <- Fs1],
+    Idxs = list_mfiles(Dir),
     lists:foldl(fun(I, AccIn) ->
-                        serialize_index([Dir, $/, I], DataSize, Fun, Chunk, AccIn)
+                        mfile:fold(I, DataSize, Fun, Chunk, AccIn)
                 end, Acc, Idxs).
-
-serialize_index(Store, DataSize, Fun, Chunk, Acc) ->
-    {ok, MFile} = open_store(Store),
-    Res = lists:foldl(fun(M, AccIn) ->
-                              serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
-                      end, Acc, store_metrics(MFile)),
-    close_store(MFile),
-    Res.
-
-
-serialize_metric(MFile, DataSize, Metric, Fun, infinity, Acc) ->
-    #mfile{offset=O,size=S} = MFile,
-    Fun1 = fun(Offset, Data, AccIn) ->
-                   Fun(Metric, Offset, Data, AccIn)
-           end,
-
-    case read(MFile, DataSize, Metric, O, S) of
-        {ok, Data} ->
-            serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
-        eof ->
-            Acc
-    end;
-
-serialize_metric(MFile, DataSize, Metric, Fun, Chunk, Acc) ->
-    serialize_metric(MFile, DataSize, Metric, Fun, 0, Chunk, Acc).
-
-%% If we've read everything (Start = Size) we just return the acc
-serialize_metric(#mfile{size = _Size},
-                 _DataSize, _Metric, _Fun, _Start, _Chunk, Acc) when _Start == _Size ->
-    Acc;
-
-%% If we have at least 'Chunk' left to read
-serialize_metric(MFile = #mfile{offset = O,
-                                size = Size},
-                 DataSize, Metric, Fun, Start, Chunk, Acc)
-  when Start + Chunk < Size ->
-    O1 = O + Start,
-    Fun1 = fun(Offset, Data, AccIn) ->
-                   Fun(Metric, Offset + Start, Data, AccIn)
-           end,
-    case read(MFile, DataSize, Metric, O1, Chunk) of
-        {ok, Data} ->
-            Acc1 = serialize_binary(DataSize, Data, Fun1, Acc, O1, <<>>),
-            serialize_metric(MFile, DataSize, Metric, Fun, Start + Chunk, Chunk, Acc1);
-        eof ->
-            Acc
-    end;
-
-%% We don't have a full chunk left to read.
-serialize_metric(MFile = #mfile{offset = O,
-                                size = Size},
-                 DataSize, Metric, Fun, Start, _Chunk, Acc) ->
-    Chunk = Size - Start,
-    O1 = O + Start,
-    Fun1 = fun(Offset, Data, AccIn) ->
-                   Fun(Metric, Offset + Start, Data, AccIn)
-           end,
-    case read(MFile, DataSize, Metric, O1, Chunk) of
-        {ok, Data} ->
-            serialize_binary(DataSize, Data, Fun1, Acc, O1, <<>>);
-        eof ->
-            Acc
-    end.
-
-
-serialize_binary(_DataSize, <<>>, _Fun, FunAcc, _O, <<>>) ->
-    FunAcc;
-serialize_binary(_DataSize, <<>>, Fun, FunAcc, O, Acc) ->
-    Fun(O, Acc, FunAcc);
-serialize_binary(DataSize, <<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, <<>>) ->
-    VSize =DataSize - 1,
-    <<_:VSize/binary, R1/binary>> = R,
-    serialize_binary(DataSize, R1, Fun, FunAcc, O+1, <<>>);
-serialize_binary(DataSize, <<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, Acc) ->
-    FunAcc1 = Fun(O, Acc, FunAcc),
-    VSize =DataSize - 1,
-    <<_:VSize/binary, R1/binary>> = R,
-  serialize_binary(DataSize, R1, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
-serialize_binary(DataSize, R, Fun, FunAcc, O, Acc) ->
-    <<V:DataSize/binary, R1/binary>> = R,
-    serialize_binary(DataSize, R1, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
-
-read_idx(F) ->
-    fold_idx(fun({init, Offset, Size}, undefined) ->
-                     {Offset, Size, btrie:new(), 0};
-                ({entry, M}, {Offset, Size, T, I}) ->
-                     {Offset, Size, btrie:store(M, I, T), I+1}
-             end, undefined, F).
-
-count_idx(F) ->
-    R = fold_idx(fun({init, _Offset, _Size}, Acc) ->
-                         Acc;
-                    ({entry, _M}, Acc) ->
-                         Acc + 1
-                 end, 0, F),
-    case R of
-        {error, invalid_file} ->
-            lager:error("Could not read index file: ~p", [F]),
-            0;
-        N ->
-            N
-    end.
-
-fold_idx(Fun, Acc0, F) ->
-    fold_idx(Fun, Acc0, 4*1024, F).
-
-fold_idx(Fun, Acc0, Chunk, F) ->
-    case file:open(F, [read | ?OPTS]) of
-        {ok, IO} ->
-            case file:read(IO, Chunk) of
-                {ok, <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE, R/binary>>} ->
-                    Acc = Fun({init, Offset, Size}, Acc0),
-                    do_fold_idx(IO, Chunk, Fun, Acc, R);
-                _ ->
-                    file:close(IO),
-                    {error, invalid_file}
-            end;
-        E ->
-            E
-    end.
 
 do_fold_idx(IO, Chunk, Fun, AccIn, <<_L:16/integer, M:_L/binary, R/binary>>) ->
     Acc = Fun({entry, M}, AccIn),
@@ -852,3 +614,7 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
             file:close(IO),
             E
     end.
+
+list_mfiles(Dir) ->
+    {ok, Fs} = file:list_dir(Dir),
+    [filename:rootname(F, ".idx") || F <- Fs].
