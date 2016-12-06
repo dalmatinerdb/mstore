@@ -561,9 +561,10 @@ do_get(S,
 
 do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
-    Base = [Dir, "/", integer_to_list(FileBase)],
+    Base = filename:join([Dir, integer_to_list(FileBase)]),
     {ok, F} = mfile:open(Base, FileBase, S, read),
-    case mfile:read(F, DataSize, Metric, Time, Count) of
+    Result = mfile:read(F, DataSize, Metric, Time, Count),
+    case Result of
         {ok, D} ->
             mfile:close(F),
             Acc1 = <<Acc/binary, D/binary>>,
@@ -616,5 +617,5 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
     end.
 
 list_mfiles(Dir) ->
-    {ok, Fs} = file:list_dir(Dir),
+    Fs = filelib:wildcard(filename:join([Dir, "*.idx"])),
     [filename:rootname(F, ".idx") || F <- Fs].

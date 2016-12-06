@@ -31,7 +31,6 @@
           index = btrie:new(),
           next = 0
          }).
-
 -opaque mfile() :: #mfile{}.
 
 -type fold_fun() :: fun((Metric :: binary(),
@@ -52,22 +51,22 @@
 %% Opens a metric file.
 %% @end
 %%--------------------------------------------------------------------
--spec open(string(), non_neg_integer(), pos_integer(), read | write) ->
+-spec open(file:filename_all(), non_neg_integer(), pos_integer(), read | write) ->
                   {ok, mfile()} |
                   {error, open_error_reason()}.
 
-open(File, Offset, Size, Mode) ->
+open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
     FileOpts = case Mode of
                    read ->
                        [read | ?OPTS];
                    write ->
                        [read, write | ?OPTS]
                end,
-    IdxFile = [File | ".idx"],
-    case read_idx(IdxFile) of
+    ReadIdx = read_idx(File),
+    case ReadIdx of
         {O, S, Idx, Next} when Offset =:= O,
                          Size =:= S ->
-            case file:open([File | ".mstore"], FileOpts) of
+            case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
                     {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
                                 size=Size, next=Next}};
@@ -79,11 +78,11 @@ open(File, Offset, Size, Mode) ->
         {_, S, _, _} when Size =/= S ->
             {error, size_missmatch};
         _E ->
-            case file:open([File |".mstore"], [read, write | ?OPTS]) of
+            case file:open(File ++ ".mstore", [read, write | ?OPTS]) of
                 {ok, F} ->
                     M = #mfile{name=File, file=F, offset=Offset,
                                size=Size, next=0},
-                    file:write_file(IdxFile,
+                    file:write_file(File ++ ".idx",
                                     <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
                     {ok, M};
                 E ->
@@ -120,11 +119,13 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx},
 %% @end
 %%--------------------------------------------------------------------
 -spec write(mfile(), pos_integer(), binary(), non_neg_integer(), binary()) ->
-                   {ok | {error, {number(), term()}, mfile()}}.
+                   {ok | {error, atom()}, mfile()}.
 
 write(M=#mfile{offset=Offset, size=S},
       DataSize, Metric, Position, Value)
   when is_binary(Value),
+       Position >= 0,
+       DataSize > 0,
        Position >= Offset,
        (Position - Offset) + (byte_size(Value) div DataSize) =< S ->
     do_write(M, DataSize, Metric, Position, Value).
@@ -144,7 +145,7 @@ close(#mfile{file=F}) ->
 %% 
 %% @end
 %%--------------------------------------------------------------------
--spec fold(string(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
+-spec fold(file:filename_all(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
 
 fold(BaseName, DataSize, Fun, Chunk, Acc) ->
     {ok, MFile} = open_store(BaseName),
@@ -159,7 +160,7 @@ fold(BaseName, DataSize, Fun, Chunk, Acc) ->
 %% Count number of elementns in give index filename
 %% @end
 %%--------------------------------------------------------------------
--spec count(mfile() | string()) -> non_neg_integer().
+-spec count(mfile() | file:filename_all()) -> non_neg_integer().
 
 count(#mfile{index = BT}) ->
     btrie:size(BT);
@@ -170,10 +171,10 @@ count(RootName) ->
                          Acc + 1
                  end, 0, RootName),
     case R of
-        {error, invalid_file} ->
-            io:format("Could not read index file: ~p~n", [RootName]),
+        {error, Reason} ->
+            io:format("Could not read index file ~s.idx: ~p~n", [RootName, Reason]),
             0;
-        N ->
+        N when is_number(N) ->
             N
     end.
 
@@ -270,9 +271,9 @@ serialize_binary(DataSize, R, Fun, FunAcc, O, Acc) ->
     serialize_binary(DataSize, R1, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
 
 open_store(BaseName) ->
-    case read_idx([BaseName | ".idx"]) of
+    case read_idx(BaseName) of
         {Offset, Size, Idx, Next} ->
-            case file:open([BaseName | ".mstore"], [read | ?OPTS]) of
+            case file:open(BaseName ++ ".mstore", [read | ?OPTS]) of
                 {ok, F} ->
                     {ok, #mfile{index=Idx, name=BaseName, file=F, offset=Offset,
                                 size=Size, next=Next}};
@@ -280,6 +281,7 @@ open_store(BaseName) ->
                     E
             end;
         E ->
+            io:format("Error opening file ~s.idx: ~p~n", [BaseName, E]),
             E
     end.
 
@@ -300,8 +302,8 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
                 Pos = M#mfile.next,
                 Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
                 Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                ok = file:write_file([M#mfile.name | ".idx"], Bin,
-                                     [read, append]),
+                IdxFile = M#mfile.name ++ ".idx",
+                ok = file:write_file(IdxFile, Bin, [read, append]),
                 {Mx, Pos*S*DataSize};
             {ok, Pos} ->
                 {M, Pos*S*DataSize}
@@ -310,15 +312,15 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
     R = file:pwrite(F, P, Value),
     {R, M1}.
 
-read_idx(F) ->
+read_idx(BaseName) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
                      {Offset, Size, btrie:new(), 0};
                 ({entry, M}, {Offset, Size, T, I}) ->
                      {Offset, Size, btrie:store(M, I, T), I+1}
-             end, undefined, F).
+             end, undefined, BaseName).
 
 fold_idx(Fun, Acc0, Chunk, RootName) ->
-    FileName = [RootName | ".idx"],
+    FileName = RootName ++ ".idx",
     case file:open(FileName, [read | ?OPTS]) of
         {ok, IO} ->
             case file:read(IO, Chunk) of
