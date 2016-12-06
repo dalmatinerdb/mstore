@@ -12,6 +12,7 @@
          open/1,
          open/2,
          open/4,
+         metrics/1,
          read/5,
          write/5,
          close/1,
@@ -53,11 +54,16 @@
 %% Opens a metric file.
 %% @end
 %%--------------------------------------------------------------------
--spec open(file:filename_all(), non_neg_integer(), pos_integer(), read | write) ->
+
+-spec open(file:filename_all()) ->
                   {ok, mfile()} |
                   {error, open_error_reason()}.
 open(File) ->
     open(File, read).
+
+-spec open(file:filename_all(), read | write) ->
+                  {ok, mfile()} |
+                  {error, open_error_reason()}.
 open(File, Mode) ->
     FileOpts = case Mode of
                    read ->
@@ -79,6 +85,9 @@ open(File, Mode) ->
             Error
     end.
 
+-spec open(file:filename_all(), non_neg_integer(), pos_integer(), read | write) ->
+                  {ok, mfile()} |
+                  {error, open_error_reason()}.
 open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
     FileOpts = case Mode of
                    read ->
@@ -114,6 +123,10 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
             end
     end.
 
+-spec metric(mfile()) ->
+                    btrie:btrie().
+metric(#mfile{index = Index}) ->
+    Index.
 %%--------------------------------------------------------------------
 %% @doc
 %% 
