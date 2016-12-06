@@ -192,14 +192,14 @@ close(#mfile{file=F}) ->
 -spec fold(file:filename_all() | mfile(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
 
 fold(#mfile() = MFile, DataSize, Fun, Chunk, Acc) ->
-    Res = lists:foldl(fun(M, AccIn) ->
-                              serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
-                      end, Acc, store_metrics(MFile)),
-    close(MFile),
-    Res;
+    lists:foldl(fun(M, AccIn) ->
+                        serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
+                end, Acc, store_metrics(MFile));
 fold(BaseName, DataSize, Fun, Chunk, Acc) ->
     {ok, MFile} = open_store(BaseName),
-    fold(MFile, DataSize, Fun, Chunk, Acc).
+    Res = fold(MFile, DataSize, Fun, Chunk, Acc),
+    close(MFile),
+    Res.
 
 %%--------------------------------------------------------------------
 %% @doc
