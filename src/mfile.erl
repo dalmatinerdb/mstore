@@ -57,7 +57,7 @@
                   {ok, mfile()} |
                   {error, open_error_reason()}.
 open(File) ->
-    open(File, [read]).
+    open(File, read).
 open(File, Mode) ->
     FileOpts = case Mode of
                    read ->
