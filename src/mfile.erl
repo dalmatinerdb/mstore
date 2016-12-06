@@ -9,6 +9,8 @@
 -module(mfile).
 
 -export([
+         open/1,
+         open/2,
          open/4,
          read/5,
          write/5,
@@ -54,6 +56,28 @@
 -spec open(file:filename_all(), non_neg_integer(), pos_integer(), read | write) ->
                   {ok, mfile()} |
                   {error, open_error_reason()}.
+open(File) ->
+    open(File, [read]).
+open(File, Mode) ->
+    FileOpts = case Mode of
+                   read ->
+                       [read | ?OPTS];
+                   write ->
+                       [read, write | ?OPTS]
+               end,
+    ReadIdx = read_idx(File),
+    case ReadIdx of
+        {Offset, Size, Idx, Next} ->
+            case file:open(File ++ ".mstore", FileOpts) of
+                {ok, F} ->
+                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
+                                size=Size, next=Next}};
+                Error ->
+                    Error
+            end;
+        Error ->
+            Error
+    end.
 
 open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
     FileOpts = case Mode of
