@@ -14,6 +14,7 @@
          open/4,
          metrics/1,
          size/1,
+         offset/1,
          read/5,
          write/5,
          close/1,
@@ -134,6 +135,11 @@ metrics(#mfile{index = Index}) ->
                   pos_integer().
 size(#mfile{size = Size}) ->
     Size.
+
+-spec offset(mfile()) ->
+                  non_neg_integer().
+offset(#mfile{offset = Offset}) ->
+    Offset.
 %%--------------------------------------------------------------------
 %% @doc
 %% 
