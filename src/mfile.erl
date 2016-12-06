@@ -13,6 +13,7 @@
          open/2,
          open/4,
          metrics/1,
+         size/1,
          read/5,
          write/5,
          close/1,
@@ -128,6 +129,11 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
                     btrie:btrie().
 metrics(#mfile{index = Index}) ->
     Index.
+
+-spec size(mfile()) ->
+                  pos_integer().
+size(#mfile{size = Size}) ->
+    Size.
 %%--------------------------------------------------------------------
 %% @doc
 %% 
@@ -183,15 +189,17 @@ close(#mfile{file=F}) ->
 %% 
 %% @end
 %%--------------------------------------------------------------------
--spec fold(file:filename_all(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
+-spec fold(file:filename_all() | mfile(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
 
-fold(BaseName, DataSize, Fun, Chunk, Acc) ->
-    {ok, MFile} = open_store(BaseName),
+fold(#mfile() = MFile, DataSize, Fun, Chunk, Acc) ->
     Res = lists:foldl(fun(M, AccIn) ->
                               serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
                       end, Acc, store_metrics(MFile)),
     close(MFile),
-    Res.
+    Res;
+fold(BaseName, DataSize, Fun, Chunk, Acc) ->
+    {ok, MFile} = open_store(BaseName),
+    fold(MFile, DataSize, Fun, Chunk, Acc).
 
 %%--------------------------------------------------------------------
 %% @doc
