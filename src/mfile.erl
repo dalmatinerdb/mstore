@@ -200,7 +200,7 @@ close(#mfile{file=F}) ->
 fold(#mfile{} = MFile, DataSize, Fun, Chunk, Acc) ->
     lists:foldl(fun(M, AccIn) ->
                         serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
-                end, Acc, store_metrics(MFile));
+                end, Acc, get_metrics(MFile));
 fold(BaseName, DataSize, Fun, Chunk, Acc) ->
     {ok, MFile} = open_store(BaseName),
     Res = fold(MFile, DataSize, Fun, Chunk, Acc),
@@ -245,11 +245,9 @@ fold_idx(Fun, Acc0, RootName) ->
 %% Private functions.
 %%--------------------------------------------------------------------
 
-
-
-
-store_metrics(#mfile{index=M}) ->
-    btrie:fetch_keys(M).
+get_metrics(#mfile{index=M}) ->
+    M1 = lists:keysort(2, btrie:to_list(M0)),
+    [M || {M, _} <- M1].
 
 serialize_metric(MFile, DataSize, Metric, Fun, infinity, Acc) ->
     #mfile{offset=O,size=S} = MFile,

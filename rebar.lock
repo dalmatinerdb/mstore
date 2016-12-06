@@ -1,8 +1,8 @@
 {"1.1.0",
-[{<<"mmath">>,{pkg,<<"mmath">>,<<"0.2.2">>},0},
- {<<"trie">>,{pkg,<<"trie">>,<<"1.5.1">>},0}]}.
+[{<<"mmath">>,{pkg,<<"mmath">>,<<"0.2.13">>},0},
+ {<<"trie">>,{pkg,<<"trie">>,<<"1.5.4">>},0}]}.
 [
 {pkg_hash,[
- {<<"mmath">>, <<"C949EF5296C9817D670325963EA85EF9A45617F61DA8D4053404061F5C07DF03">>},
- {<<"trie">>, <<"348AF3D7D3653E82683A9F9E4026DAC5EA3BFAF8B81867056EC507610B1BFA60">>}]}
+ {<<"mmath">>, <<"1B11E23B2D11E5D4897A30BAB3779CAAAB8E90EF82F3576D73ECE790DB0F4E57">>},
+ {<<"trie">>, <<"DC9A5A076FEE8A168FEAB7E35B5100ADC58D6B4F031F4D87CE2F372FCFFD8E53">>}]}
 ].
