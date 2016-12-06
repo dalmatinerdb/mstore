@@ -1,7 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @author Heinz N. Gies <heinz@licenser.net>
 %%% @copyright (C) 2016, Heinz N. Gies
-%%% @doc MStore file module. 
+%%% @doc MStore file module.
 %%%
 %%% @end
 %%% Created :  5 Dec 2016 by Heinz N. Gies <heinz@licenser.net>
@@ -20,6 +20,7 @@
          count/1,
          fold_idx/3
         ]).
+
 -export_type([mfile/0, fold_fun/0]).
 
 -include_lib("mmath/include/mmath.hrl").
@@ -123,9 +124,9 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
             end
     end.
 
--spec metric(mfile()) ->
+-spec metrics(mfile()) ->
                     btrie:btrie().
-metric(#mfile{index = Index}) ->
+metrics(#mfile{index = Index}) ->
     Index.
 %%--------------------------------------------------------------------
 %% @doc
