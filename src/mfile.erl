@@ -245,7 +245,7 @@ fold_idx(Fun, Acc0, RootName) ->
 %% Private functions.
 %%--------------------------------------------------------------------
 
-get_metrics(#mfile{index=M}) ->
+get_metrics(#mfile{index = M0}) ->
     M1 = lists:keysort(2, btrie:to_list(M0)),
     [M || {M, _} <- M1].
 
