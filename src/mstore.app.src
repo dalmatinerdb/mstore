@@ -2,7 +2,7 @@
              [{description,"Fast, flat metric store."},
               {vsn,"0.2.0"},
               {registered,[]},
-              {applications,[kernel,stdlib,mmath,trie]},
+              {applications,[kernel,stdlib,mmath,trie,bitmap]},
               {env,[]},
               {maintainer,["Heinz N. Gies"]},
               {licenses,["MIT"]},

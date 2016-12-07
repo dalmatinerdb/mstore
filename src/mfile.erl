@@ -3,6 +3,40 @@
 %%% @copyright (C) 2016, Heinz N. Gies
 %%% @doc MStore file module.
 %%%
+%%%
+%%% Bitmap logic:
+%%% the mfile keeps an bitmap of points written. The bitmap file
+%%% structure is similar to the structure of the .mstore file
+%%% as in that each element has a fixed size and is written in order
+%%% based on the .idx file.
+%%%
+%%% The bitmap file is **not** guaranteed to be up to date, if
+%%% changes are made they are made to a in memory structure an only
+%%% persisted to disk when the mfile is properly closed.
+%%%
+%%% This can lead to inconsistencies, however the .bitmap file is
+%%% just a different view on data that was already written - namely
+%%% the .data file.
+%%%
+%%% To compesnate for posibly inconsistencies we repair the .bitmap
+%%% on opening an mfile. This can be done very simply, we known the
+%%% bitmap is up to date when the *lastmodified* if the bitmap file
+%%% is newer then the *lastmodified* of the data file. In a sense
+%%% the datafile works as a WAL for the bitmap, when our WAL is
+%%% newer we know we're outdated and for the sake of 'simplicity'
+%%% just recompute the entire bitmap file.
+%%%
+%%% While this might not be the perfect solution it also makes for
+%%% a seamless update of existing mfile files, as a missing bitmap
+%%% can be treated as a outdated bitmap.
+%%%
+%%% If mesurements show this is highly problematic we might need to
+%%% adopt a more complex solution.
+%%%
+%%% It should be noted that last_modified returns second precisions
+%%% which could lead to some unnice behaviour however we are willing
+%%% to accept this lack of precision at this time.
+%%%
 %%% @end
 %%% Created :  5 Dec 2016 by Heinz N. Gies <heinz@licenser.net>
 %%%-------------------------------------------------------------------
@@ -79,8 +113,9 @@ open(File, Mode) ->
         {Offset, Size, Idx, Next} ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
-                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next}};
+                    MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
+                                size=Size, next=Next}
+                    {ok, check_bitmap(MF)};
                 Error ->
                     Error
             end;
@@ -104,8 +139,9 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
                          Size =:= S ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
-                    {ok, #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next}};
+                    MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
+                                size=Size, next=Next},
+                    {ok, check_bitmap(MF)};
                 E ->
                     E
             end;
@@ -187,8 +223,8 @@ write(M=#mfile{offset=Offset, size=S},
 %%--------------------------------------------------------------------
 -spec close(mfile()) -> ok.
 
-close(#mfile{file=F}) ->
-    file:close(F).
+close(MF = #mfile{file=F}) ->
+    file:close(write_bitmap(F)).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -404,3 +440,19 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
             file:close(IO),
             E
     end.
+
+check_bitmap(F = #mfile{name = File}) ->
+    case {filelib:last_modified(File ++ ".mstore"),
+          filelib:last_modified(File ++ ".bitmap")} of
+        {Store, BMP} when BMP >= Store ->
+            F;
+        _ ->
+            lager:warning("Bitmap out of date: ~s", [File]),
+            update_bitmap(F)
+    end.
+
+update_bitmap(F) ->
+    F.
+
+write_bitmap(F) ->
+    F.
