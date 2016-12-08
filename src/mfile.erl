@@ -107,7 +107,7 @@
                          Offset :: non_neg_integer(),
                          Data :: binary(), AccIn :: any()) -> AccOut :: any()).
 
--type open_error_reason() :: file:posix() | badarg | system_limit | 
+-type open_error_reason() :: file:posix() | badarg | system_limit |
                              offset_missmatch | size_missmatch.
 
 -type read_error_reason() :: file:posix() | badarg | terminated | not_found.
@@ -166,7 +166,7 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
     ReadIdx = read_idx(File),
     case ReadIdx of
         {O, S, Idx, Next} when Offset =:= O,
-                         Size =:= S ->
+                               Size =:= S ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
                     MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
@@ -198,7 +198,7 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
     end.
 
 -spec metrics(mfile()) ->
-                    btrie:btrie().
+                     btrie:btrie().
 metrics(#mfile{index = Index}) ->
     Index.
 
@@ -208,12 +208,12 @@ size(#mfile{size = Size}) ->
     Size.
 
 -spec offset(mfile()) ->
-                  non_neg_integer().
+                    non_neg_integer().
 offset(#mfile{offset = Offset}) ->
     Offset.
 %%--------------------------------------------------------------------
 %% @doc
-%% 
+%%
 %% @end
 %%--------------------------------------------------------------------
 -spec read(mfile(), pos_integer(), binary(), non_neg_integer(), pos_integer()) ->
@@ -253,7 +253,7 @@ bitmap(M = #mfile{index = Idx}, Metric) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% 
+%%
 %% @end
 %%--------------------------------------------------------------------
 -spec write(mfile(), pos_integer(), binary(), non_neg_integer(), binary()) ->
@@ -281,7 +281,7 @@ close(MF = #mfile{file=F}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% 
+%%
 %% @end
 %%--------------------------------------------------------------------
 -spec fold(file:filename_all() | mfile(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
@@ -404,7 +404,7 @@ serialize_binary(DataSize, <<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, Acc) 
     FunAcc1 = Fun(O, Acc, FunAcc),
     VSize =DataSize - 1,
     <<_:VSize/binary, R1/binary>> = R,
-  serialize_binary(DataSize, R1, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
+    serialize_binary(DataSize, R1, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
 serialize_binary(DataSize, R, Fun, FunAcc, O, Acc) ->
     <<V:DataSize/binary, R1/binary>> = R,
     serialize_binary(DataSize, R1, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
@@ -608,7 +608,7 @@ set_bitmap(<<_:64, R/binary>>, I, B) ->
     set_bitmap(R, I+1, B1).
 
 get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
-    case maps:find(Pos, BMPs) of 
+    case maps:find(Pos, BMPs) of
         {ok, B} ->
             {B, M};
         error ->
@@ -616,35 +616,31 @@ get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
     end.
 
 read_bitmap(Pos, M = #mfile{size = Size,
-                            name = File,
-                            bitmaps = BMPs}) ->
-    {B, M0}
-        = case file:open(File ++ ".bitmap", [raw, binary, read]) of
-              {ok, IO} ->
-                  BSize = bitmap:bytes(Size),
-                  Location = Pos * BSize,
-                  Br = case file:pread(IO, Location, BSize) of
-                           %% If the bitmap has the expected size
-                           %% we return it
-                           {ok, <<Size:64, _>> = Bx} ->
-                               Bx;
-                           %% If we can read but the size doesn't match (aka it's zero)
-                           %% this is an empty bitmap and we create a new one
-                           {ok, _} ->
-                               {ok, Bx} = bitmap:new([{size, Size}]),
-                               Bx;
-                           eof ->
-                               {ok, Bx} = bitmap:new([{size, Size}]),
-                            Bx
-                       end,
-                  ok = file:close(IO),
-                  {Br, update_btime(M)};
-            _ ->
-                  {ok, Bx} = bitmap:new([{size, Size}]),
-                  {Bx, M}
-        end,
-    M1 = M0#mfile{bitmaps = maps:put(Pos, B, BMPs)},
-    {B, M1}.
+                            name = File}) ->
+    case file:open(File ++ ".bitmap", [raw, binary, read]) of
+        {ok, IO} ->
+            BSize = bitmap:bytes(Size),
+            Location = Pos * BSize,
+            Br = case file:pread(IO, Location, BSize) of
+                     %% If the bitmap has the expected size
+                     %% we return it
+                     {ok, <<Size:64, _>> = Bx} ->
+                         Bx;
+                     %% If we can read but the size doesn't match (aka it's zero)
+                     %% this is an empty bitmap and we create a new one
+                     {ok, _} ->
+                         {ok, Bx} = bitmap:new([{size, Size}]),
+                         Bx;
+                     eof ->
+                         {ok, Bx} = bitmap:new([{size, Size}]),
+                         Bx
+                 end,
+            ok = file:close(IO),
+            {Br, update_btime(M)};
+        _ ->
+            {ok, Bx} = bitmap:new([{size, Size}]),
+            {Bx, M}
+    end.
 
 update_btime(M = #mfile{name = File, otime = undefined}) ->
     OTime = filelib:last_modified(File ++ ".bitmap"),
