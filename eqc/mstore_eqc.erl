@@ -4,8 +4,9 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("../include/mstore.hrl").
 
--import(mstore_helper, [int_array/0, pos_int/0, non_neg_int/0,
-                        non_empty_int_list/0, defined_int_array/0]).
+-import(mstore_helper, [int_array/0, pos_int/0, non_neg_int/0, size/0,
+                        non_empty_int_list/0, defined_int_array/0,
+                        non_z_int/0]).
 
 -compile(export_all).
 %%%-------------------------------------------------------------------
@@ -79,12 +80,6 @@ new(FileSize, MaxFiles, Dir) ->
     {ok, MSet} = mstore:new(Dir, [{file_size, FileSize},
                                   {max_files, MaxFiles}]),
     MSet.
-
-non_z_int() ->
-    ?SUCHTHAT(I, int(), I =/= 0).
-
-size() ->
-    choose(1000,2000).
 
 offset() ->
     choose(0, 5000).

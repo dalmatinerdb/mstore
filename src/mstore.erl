@@ -263,7 +263,7 @@ fold(MStore, FoldFun, Acc) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec fold(mstore(), FoldFun :: mfile:fold_fun(), 
+-spec fold(mstore(), FoldFun :: mfile:fold_fun(),
            ChunkSize :: pos_integer() | infinity,
            AccIn :: any()) ->
                   AccOut :: any().
@@ -301,8 +301,8 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
                   false ->
                       MStorex = MStore#mstore{metrics=btrie:store(Metric, Ms)},
                       ok = file:write_file([MStorex#mstore.dir | "/mstore"],
-                                      <<(byte_size(Metric)):16/integer, Metric/binary>>,
-                                      [read, append]),
+                                           <<(byte_size(Metric)):16/integer, Metric/binary>>,
+                                           [read, append]),
                       MStorex
               end,
     CurFiles1 = do_put(MStore1, Metric, Parts1, Value, CurFiles),
@@ -403,11 +403,11 @@ chunks(Dir, Ext) ->
 
 reindex_chunk(IO, File, Set) ->
     mfile:fold_idx(fun({entry, M}, Acc) ->
-                     ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
-                     btrie:store(M, Acc);
-                (_, Acc) ->
-                     Acc
-             end, Set, File).
+                           ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
+                           btrie:store(M, Acc);
+                      (_, Acc) ->
+                           Acc
+                   end, Set, File).
 
 index_header(#mstore{size=FileSize, data_size=DataSize}) ->
     <<?VERSION:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, DataSize:64/?SIZE_TYPE>>.
@@ -432,16 +432,16 @@ open_mfile(F) ->
             case file:read(IO, Chunk) of
                 {ok, <<2:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
-                                     fun({entry, M}, Acc) ->
-                                             btrie:store(M, Acc)
-                                     end, btrie:new(), R),
+                                      fun({entry, M}, Acc) ->
+                                              btrie:store(M, Acc)
+                                      end, btrie:new(), R),
                     {ok, FileSize, 8, Set};
                 {ok, <<?VERSION:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE,
                        DataSize:64/?SIZE_TYPE, R/binary>>} ->
                     Set = do_fold_idx(IO, Chunk,
-                                     fun({entry, M}, Acc) ->
-                                             btrie:store(M, Acc)
-                                     end, btrie:new(), R),
+                                      fun({entry, M}, Acc) ->
+                                              btrie:store(M, Acc)
+                                      end, btrie:new(), R),
                     {ok, FileSize, DataSize, Set};
                 {ok, _} ->
                     file:close(IO),

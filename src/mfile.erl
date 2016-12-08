@@ -37,6 +37,33 @@
 %%% which could lead to some unnice behaviour however we are willing
 %%% to accept this lack of precision at this time.
 %%%
+%%% Possible problem: So far we coulde perform asyncornous reads and
+%%% get data from disk without blocking other processes (yay ZFS)
+%%% bitmaps get in the way. When we follow the 'write only on close'
+%%% principle asyncronouys reads can not update the bitmap!
+%%% Doing so would lead to the following race condiution:
+%%%
+%%% 1) p1 opens for write
+%%% 2) p1 writes (updates BMP) min memory
+%%% 3) p2 opens for reads
+%%% 4) p2 finds data file older then bmp file
+%%% 5) p2 updates bmp file (assumes outdated)
+%%% 6) p1 closes and wants to write to bitmap
+%%% 7) p1 will overwrite changes made by p2
+%%%
+%%% Question: Is this really problematic? P1 shoud
+%%% in the worst case have a newer view on data.
+%%%
+%%% Possible answer: kind of ihs, it would mean p2 will update
+%%% the index on nearly every read due to the data file constantly
+%%% being ahead of time
+%%%
+%%% Possible answer: Not entirely as P1 will never write 'outdated'
+%%% data as p2 won't write infomration just re-read.
+%%%
+%%% The corrent compromise is to only update the bitmap file on reads
+%%% if no file exist (as part of a version update) and have new mstores
+%%% generate an empty bitmap file on creation time.
 %%% @end
 %%% Created :  5 Dec 2016 by Heinz N. Gies <heinz@licenser.net>
 %%%-------------------------------------------------------------------
@@ -50,6 +77,7 @@
          size/1,
          offset/1,
          read/5,
+         bitmap/2,
          write/5,
          close/1,
          fold/5,
@@ -69,7 +97,9 @@
           offset,
           size,
           index = btrie:new(),
-          next = 0
+          next = 0,
+          otime = undefined,
+          bitmaps = #{}
          }).
 -opaque mfile() :: #mfile{}.
 
@@ -114,8 +144,8 @@ open(File, Mode) ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
                     MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next}
-                    {ok, check_bitmap(MF)};
+                                size=Size, next=Next},
+                    {ok, check_bitmap(MF, Mode)};
                 Error ->
                     Error
             end;
@@ -141,7 +171,7 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
                 {ok, F} ->
                     MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
                                 size=Size, next=Next},
-                    {ok, check_bitmap(MF)};
+                    {ok, check_bitmap(MF, Mode)};
                 E ->
                     E
             end;
@@ -156,6 +186,11 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
                                size=Size, next=0},
                     file:write_file(File ++ ".idx",
                                     <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
+                    %% We ensure taht if we create a new mstore we also create
+                    %% a bitmap file this allows us to distinguish between'
+                    %% existing mstore that is outdated and bitmap was not
+                    %% written.
+                    file:write_file(File ++ ".bitmap", <<>>),
                     {ok, M};
                 E ->
                     E
@@ -200,6 +235,23 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx},
     end.
 
 %%--------------------------------------------------------------------
+%% @doc Fetches the bitmap for a metric
+%% @end
+%%--------------------------------------------------------------------
+-spec bitmap(mfile(), binary()) ->
+                    {error, not_found} |
+                    {ok, bitmap:bitmap(), mfile()}.
+
+bitmap(M = #mfile{index = Idx}, Metric) ->
+    case btrie:find(Metric, Idx) of
+        error ->
+            {error, not_found};
+        {ok, Pos} ->
+            {B, M1} = get_bitmap(Pos, M),
+            {ok, B, M1}
+    end.
+
+%%--------------------------------------------------------------------
 %% @doc
 %% 
 %% @end
@@ -224,7 +276,8 @@ write(M=#mfile{offset=Offset, size=S},
 -spec close(mfile()) -> ok.
 
 close(MF = #mfile{file=F}) ->
-    file:close(write_bitmap(F)).
+    write_bitmap(MF),
+    file:close(F).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -382,21 +435,28 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
     %% writing to the mstore ensures that offsets are calculated so as not to
     %% cause data to overlap. In other words, data loss is acceptable, but not
     %% data corruption.
-    {M1, Base} =
+    {M1, Pos} =
         case btrie:find(Metric, Idx) of
             error ->
-                Pos = M#mfile.next,
-                Mx = M#mfile{next=Pos+1, index=btrie:store(Metric, Pos, Idx)},
+                Posx = M#mfile.next,
+                Mx = M#mfile{next=Posx+1, index=btrie:store(Metric, Posx, Idx)},
                 Bin = <<(byte_size(Metric)):16/integer, Metric/binary>>,
                 IdxFile = M#mfile.name ++ ".idx",
                 ok = file:write_file(IdxFile, Bin, [read, append]),
-                {Mx, Pos*S*DataSize};
-            {ok, Pos} ->
-                {M, Pos*S*DataSize}
+                {Mx, Posx};
+            {ok, Posx} ->
+                {M, Posx}
         end,
+    M2 = update_bitmap(M1, Pos, Position, Value),
+    Base = Pos*S*DataSize,
     P = Base+((Position - Offset)*DataSize),
     R = file:pwrite(F, P, Value),
-    {R, M1}.
+    {R, M2}.
+
+update_bitmap(M = #mfile{offset = Offset}, Pos, Position, Data) ->
+    {B, M1 = #mfile{bitmaps = BMPs}} = get_bitmap(Pos, M),
+    B1 = set_bitmap(Data, Position - Offset, B),
+    M1#mfile{bitmaps = maps:put(Pos, B1, BMPs)}.
 
 read_idx(BaseName) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
@@ -440,19 +500,155 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
             file:close(IO),
             E
     end.
+check_bitmap(F = #mfile{name = File}, read) ->
+    case filelib:is_file(File ++ ".bitmap") of
+        true ->
+            %% The file exists so we don't udate
+            %% it.
+            F;
+        false ->
+            %% This is a outdated mstore that was
+            %% created before we kept bitmaps
+            %% even if we only read we update the
+            %% bitmap
+            update_bitmap(F)
+    end;
 
-check_bitmap(F = #mfile{name = File}) ->
+check_bitmap(F = #mfile{name = File}, write) ->
     case {filelib:last_modified(File ++ ".mstore"),
           filelib:last_modified(File ++ ".bitmap")} of
         {Store, BMP} when BMP >= Store ->
             F;
         _ ->
-            lager:warning("Bitmap out of date: ~s", [File]),
             update_bitmap(F)
     end.
 
-update_bitmap(F) ->
-    F.
+-record(acc, {
+          offset,
+          file,
+          metric,
+          bitmap,
+          size,
+          io
+         }).
 
-write_bitmap(F) ->
-    F.
+create_bitmap_fn(Metric, Idx, Data,
+                 Acc = #acc{size = Size,
+                            offset = Offset,
+                            metric = undefined}) ->
+    {ok, B} = bitmap:new([{size, Size}]),
+    B1 = set_bitmap(Data, Idx - Offset, B),
+    Acc#acc{metric = Metric, bitmap = B1};
+
+create_bitmap_fn(Metric, Idx, Data,
+                 Acc = #acc{metric = Metric,
+                            offset = Offset,
+                            bitmap = B}) ->
+    B1 = set_bitmap(Data, Idx - Offset, B),
+    Acc#acc{bitmap = B1};
+
+create_bitmap_fn(Metric, Idx, Data,
+                 Acc = #acc{size = Size,
+                            offset = Offset,
+                            bitmap = BOld,
+                            io = IO}) ->
+    {ok, B} = bitmap:new([{size, Size}]),
+    B1 = set_bitmap(Data, Idx - Offset, B),
+    ok = file:write(IO, BOld),
+    Acc#acc{metric = Metric, bitmap = B1}.
+
+update_bitmap(F = #mfile{name = File}) ->
+    {ok, IO} = file:open(File ++ ".bitmap", [write, binary, raw]),
+    Acc0 = #acc{
+              io = IO,
+              size = mfile:size(F),
+              offset = offset(F)
+             },
+    #acc{bitmap = B} = fold(F, ?DATA_SIZE, fun create_bitmap_fn/4, 4096, Acc0),
+    ok = file:write(IO, B),
+    ok = file:close(IO),
+    update_btime(F).
+
+write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
+    case {maps:size(BMPs), filelib:last_modified(File ++ ".bitmap")} of
+        {0, _} ->
+            F;
+        {_, OTimeA} when OTimeA =< OTime ->
+            write_bitmap_(F);
+        {_, Current} ->
+            io:format("Oh my the bitmap changed since we last "
+                      "read it! What shall we do?!?! For now we "
+                      "just write YOLO! (read: this is stupid)\n"
+                      "(Current) ~p > ~p (recorded)\n", [Current, OTime]),
+            fuck = write_bitmap_(F)
+    end.
+
+write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
+
+    BSize = bitmap:bytes(Size),
+    case maps:to_list(BMPs) of
+        [] ->
+            F;
+        Data ->
+            Writes = [{P * BSize, Bin} || {P, Bin} <- Data],
+            {ok, IO} = file:open(File ++ ".bitmap", [raw, binary, write]),
+            ok = file:pwrite(IO, Writes),
+            ok = file:close(IO),
+            update_btime(F)
+    end.
+
+set_bitmap(<<>>, _I, B) ->
+    B;
+
+set_bitmap(<<0, _:56, R/binary>>, I, B) ->
+    set_bitmap(R, I + 1, B);
+
+set_bitmap(<<_:64, R/binary>>, I, B) ->
+    {ok, B1} = bitmap:set(I, B),
+    set_bitmap(R, I+1, B1).
+
+get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
+    case maps:find(Pos, BMPs) of 
+        {ok, B} ->
+            {B, M};
+        error ->
+            read_bitmap(Pos, M)
+    end.
+
+read_bitmap(Pos, M = #mfile{size = Size,
+                            name = File,
+                            bitmaps = BMPs}) ->
+    {B, M0}
+        = case file:open(File ++ ".bitmap", [raw, binary, read]) of
+              {ok, IO} ->
+                  BSize = bitmap:bytes(Size),
+                  Location = Pos * BSize,
+                  Br = case file:pread(IO, Location, BSize) of
+                           %% If the bitmap has the expected size
+                           %% we return it
+                           {ok, <<Size:64, _>> = Bx} ->
+                               Bx;
+                           %% If we can read but the size doesn't match (aka it's zero)
+                           %% this is an empty bitmap and we create a new one
+                           {ok, _} ->
+                               {ok, Bx} = bitmap:new([{size, Size}]),
+                               Bx;
+                           eof ->
+                               {ok, Bx} = bitmap:new([{size, Size}]),
+                            Bx
+                       end,
+                  ok = file:close(IO),
+                  {Br, update_btime(M)};
+            _ ->
+                  {ok, Bx} = bitmap:new([{size, Size}]),
+                  {Bx, M}
+        end,
+    M1 = M0#mfile{bitmaps = maps:put(Pos, B, BMPs)},
+    {B, M1}.
+
+update_btime(M = #mfile{name = File, otime = undefined}) ->
+    OTime = filelib:last_modified(File ++ ".bitmap"),
+    M#mfile{otime = OTime};
+
+update_btime(M) ->
+    M.

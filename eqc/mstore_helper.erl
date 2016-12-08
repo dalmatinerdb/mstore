@@ -5,7 +5,7 @@
 -include("../include/mstore.hrl").
 
 -export([int_array/0, pos_int/0, non_neg_int/0, non_empty_int_list/0,
-         defined_int_array/0]).
+         defined_int_array/0, size/0, non_z_int/0]).
 
 defined_int_array() ->
     ?SUCHTHAT({R, _, _}, int_array(), [ok || {true, _} <- R] =/= []).
@@ -38,3 +38,9 @@ to_bin([{true, V} | R], Acc) when is_integer(V) ->
 
 to_bin([], Acc) ->
     Acc.
+
+size() ->
+    choose(1000,2000).
+
+non_z_int() ->
+    ?SUCHTHAT(I, int(), I =/= 0).
