@@ -53,6 +53,7 @@
          delete/2,
          reindex/1,
          get/4,
+         bitmap/3,
          open_mfile/1,
          put/4,
          metrics/1,
@@ -241,6 +242,26 @@ get(#mstore{size=S, files=FS, dir=Dir, data_size=DataSize},
     Parts = make_splits(Time, Count, S),
     R = do_get(S, FS, Dir, DataSize, Metric, Parts, <<>>),
     ?DT_READ_RETURN,
+    R.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Reads the bitmap for a given time slot. Time must not be allinged
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bitmap(
+        mstore(),
+        binary(),
+        non_neg_integer()) ->
+                 {'error',atom()} |
+                 {ok, bitmap:bitmap()}.
+
+bitmap(#mstore{size=S, files=FS, dir=Dir},
+    Metric, Time) when
+      is_binary(Metric),
+      is_integer(Time), Time >= 0 ->
+    R = do_get_bitmap(S, FS, Dir, Metric, Time),
     R.
 
 %%--------------------------------------------------------------------
@@ -506,6 +527,41 @@ limit_files(MStore = #mstore{max_files = MaxFiles,
     limit_files(MStore#mstore{files = R});
 limit_files(MStore) ->
     MStore.
+
+do_get_bitmap(S, [{FileBase, F} | _],
+              _Dir, Metric, Time)
+  when ((Time div S) * S) =:= FileBase ->
+    case mfile:bitmap(F, Metric) of
+        {ok, B, _F1} ->
+            {ok, B};
+        E ->
+            E
+    end;
+do_get_bitmap(S, [_, {FileBase, F}],
+              _Dir, Metric, Time)
+  when ((Time div S) * S) =:= FileBase ->
+    case mfile:bitmap(F, Metric) of
+        {ok, B, _F1} ->
+            {ok, B};
+        E ->
+            E
+    end;
+do_get_bitmap(S, _Files, Dir, Metric, Time) ->
+    Base = ((Time div S) * S),
+    File = filename:join([Dir, integer_to_list(Base)]),
+    case mfile:open(File) of
+        {ok, F} ->
+            case mfile:bitmap(F, Metric) of
+                {ok, B, F1} ->
+                    mfile:close(F1),
+                    {ok, B};
+                E ->
+                    mfile:close(F),
+                    E
+            end;
+        {error, enoent} ->
+            {error, not_found}
+    end.
 
 do_get(_, _, _, _, _, [], Acc) ->
     {ok, Acc};

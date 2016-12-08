@@ -624,7 +624,7 @@ read_bitmap(Pos, M = #mfile{size = Size,
             Br = case file:pread(IO, Location, BSize) of
                      %% If the bitmap has the expected size
                      %% we return it
-                     {ok, <<Size:64, _>> = Bx} ->
+                     {ok, <<Size:64/unsigned, _/binary>> = Bx} ->
                          Bx;
                      %% If we can read but the size doesn't match (aka it's zero)
                      %% this is an empty bitmap and we create a new one

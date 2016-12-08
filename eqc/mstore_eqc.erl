@@ -127,26 +127,61 @@ prop_read_len() ->
 
 prop_gb_comp() ->
     ?FORALL({FileSize, MaxFiles}, {size(), max_files()},
-            begin
-                ?FORALL(D, store(FileSize, MaxFiles),
-                        begin
-                            os:cmd("rm -r " ++ ?DIR),
-                            {S, T} = eval(D),
-                            L = gb_trees:to_list(T),
-                            L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
-                            mstore:delete(S),
-                            L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
-                            L3 = [true || {_V, _V} <- L2],
-                            Len = length(L),
-                            Res = length(L1) == Len andalso
-                                length(L2) == Len andalso
-                                length(L3) == Len,
-                            ?WHENFAIL(io:format(user,
-                                                "L:  ~p~n"
-                                                "L1: ~p~n"
-                                                "L2: ~p~n"
-                                                "L3: ~p~n", [L, L1, L2, L3]),
-                                      Res)
+            ?FORALL(D, store(FileSize, MaxFiles),
+                    begin
+                        os:cmd("rm -r " ++ ?DIR),
+                        {S, T} = eval(D),
+                        L = gb_trees:to_list(T),
+                        L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
+                        mstore:delete(S),
+                        L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
+                        L3 = [true || {_V, _V} <- L2],
+                        Len = length(L),
+                        Res = length(L1) == Len andalso
+                            length(L2) == Len andalso
+                            length(L3) == Len,
+                        ?WHENFAIL(io:format(user,
+                                            "L:  ~p~n"
+                                            "L1: ~p~n"
+                                            "L2: ~p~n"
+                                            "L3: ~p~n", [L, L1, L2, L3]),
+                                  Res)
+                    end
+                   )).
+
+
+%% We choose offset between 0 and 5000, so we'll do a fixed 6000 file size
+%% to guarantee we don't overstep one file (meh but a staert)
+prop_bitmap() ->
+    ?FORALL({FileSize, MaxFiles}, {6000, max_files()},
+            ?FORALL(D, store(FileSize, MaxFiles),
+                    begin
+                        os:cmd("rm -r " ++ ?DIR),
+                        {S, T} = eval(D),
+                        case mstore:bitmap(S, ?M, 0) of
+                            {error, not_found} ->
+                                gb_trees:size(T) =:= 0;
+                            {ok, B} ->
+                                mstore:close(S),
+                                Keys = gb_trees:keys(T),
+                                {ok, B0} = bitmap:new([{size, FileSize}]),
+                                BT = lists:foldl(
+                                       fun(I, Acc) ->
+                                               {ok, Acc1} = bitmap:set(I, Acc),
+                                               Acc1
+                                       end, B0, Keys),
+                                ?WHENFAIL(begin
+                                              io:format(user,
+                                                        "~n== Tree:~n", []),
+                                              bitmap:display(BT, 100),
+                                              io:format(user,
+                                                        "~n== Store:~n", []),
+                                              bitmap:display(B, 100),
+                                              io:format(user,
+                                                        "~n== Delta:~n", []),
+                                              bitmap:display_diff(BT, B, 100),
+                                              io:format(user, "~n", [])
+                                          end,
+                                          BT =:= B)
                         end
-                       )
-            end).
+                    end)).

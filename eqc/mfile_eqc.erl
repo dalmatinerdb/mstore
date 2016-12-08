@@ -13,8 +13,6 @@
 -define(DIR, ".qcdata").
 -compile(export_all).
 
-
-
 new(FileSize, Offset, Dir) ->
     {ok, MF} = mfile:open(Dir ++ "/mfile", Offset, FileSize, write),
     MF.
