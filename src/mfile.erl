@@ -220,7 +220,7 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             {error, not_found};
         {ok, Pos} ->
             Base = Pos * S * ?DATA_SIZE,
-            P = Base+((Position - Offset) * ?DATA_SIZE),
+            P = Base + ((Position - Offset) * ?DATA_SIZE),
             file:pread(F, P, Count * ?DATA_SIZE)
     end.
 
@@ -332,7 +332,6 @@ serialize_metric(MFile, Metric, Fun, infinity, Acc) ->
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
-
     case read(MFile, Metric, O, S) of
         {ok, Data} ->
             serialize_binary(Data, Fun1, Acc, O, <<>>);
@@ -350,11 +349,12 @@ serialize_metric(#mfile{size = _Size}, _Metric, _Fun, _Start, _Chunk, Acc)
 
 %% If we have at least 'Chunk' left to read
 serialize_metric(MFile = #mfile{offset = O,
-                                size = Size}, Metric, Fun, Start, Chunk, Acc)
+                                size = Size},
+                 Metric, Fun, Start, Chunk, Acc)
   when Start + Chunk < Size ->
     O1 = O + Start,
     Fun1 = fun(Offset, Data, AccIn) ->
-                   Fun(Metric, Offset + Start, Data, AccIn)
+                   Fun(Metric, Offset, Data, AccIn)
            end,
     case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
@@ -371,7 +371,7 @@ serialize_metric(MFile = #mfile{offset = O,
     Chunk = Size - Start,
     O1 = O + Start,
     Fun1 = fun(Offset, Data, AccIn) ->
-                   Fun(Metric, Offset + Start, Data, AccIn)
+                   Fun(Metric, Offset, Data, AccIn)
            end,
     case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
@@ -572,7 +572,6 @@ write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
     end.
 
 write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
-
     BSize = bitmap:bytes(Size),
     case maps:to_list(BMPs) of
         [] ->
@@ -593,7 +592,7 @@ set_bitmap(<<0, _:56, R/binary>>, I, B) ->
 
 set_bitmap(<<_:64, R/binary>>, I, B) ->
     {ok, B1} = bitmap:set(I, B),
-    set_bitmap(R, I+1, B1).
+    set_bitmap(R, I + 1, B1).
 
 get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
     case maps:find(Pos, BMPs) of
