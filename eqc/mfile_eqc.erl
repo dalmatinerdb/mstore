@@ -14,7 +14,9 @@
 -compile(export_all).
 
 new(FileSize, Offset, Dir) ->
-    {ok, MF} = mfile:open(Dir ++ "/mfile", Offset, FileSize, write),
+    {ok, MF} = mfile:open(Dir ++ "/mfile", [{offset, Offset},
+                                            {file_size, FileSize},
+                                            write]),
     MF.
 
 mfile(FileSize, Offset) ->

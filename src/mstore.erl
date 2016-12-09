@@ -126,7 +126,7 @@ new(FileSize, DataSize, Dir) when
     new(FileSize, DataSize, binary_to_list(Dir));
 
 new(FileSize, DataSize, Dir) ->
-    IdxFile = [Dir | "/mstore"],
+    IdxFile = filename:join([Dir, "mstore"]),
     case open_mfile(IdxFile) of
         {ok, F, _IS, _Metrics} when F =/= FileSize ->
             {error, filesize_missmatch};
@@ -155,7 +155,7 @@ open(Dir) ->
 -spec open(Dir :: string(), [open_opt()]) ->
                   {ok, mstore()} | {error, enoent | not_found | invalid_file}.
 open(Dir, Opts) ->
-    case open_mfile([Dir | "/mstore"]) of
+    case open_mfile(filename:join([Dir, "mstore"])) of
         {ok, FileSize, DataSize, Metrics} ->
             M =  #mstore{size=FileSize, dir=Dir, data_size = DataSize,
                          metrics=Metrics},
@@ -213,9 +213,10 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
         _ ->
             [mfile:close(F) || {_, F} <- Files],
             [begin
-                 F = [Dir, $/, integer_to_list(C), $.],
-                 file:delete([F | "mstore"]),
-                 file:delete([F | "idx"])
+                 F = filename:join([Dir , integer_to_list(C)]),
+                 file:delete(F ++ ".mstore"),
+                 file:delete(F ++ ".bitmap"),
+                 file:delete(F ++ ".idx")
              end || C <- Chunks1],
             reindex(MStore#mstore{files = []})
     end.
@@ -321,8 +322,10 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms, data_size = DataSize},
                       MStore;
                   false ->
                       MStorex = MStore#mstore{metrics=btrie:store(Metric, Ms)},
-                      ok = file:write_file([MStorex#mstore.dir | "/mstore"],
-                                           <<(byte_size(Metric)):16/integer, Metric/binary>>,
+                      FileName = filename:join([MStorex#mstore.dir, "mstore"]),
+                      ok = file:write_file(FileName,
+                                           <<(byte_size(Metric)):16/integer,
+                                             Metric/binary>>,
                                            [read, append]),
                       MStorex
               end,
@@ -388,8 +391,8 @@ make_splits(Time, Count, Size) ->
 -spec reindex(mstore()) -> {ok, mstore()}.
 
 reindex(MStore = #mstore{dir = Dir}) ->
-    IdxFileOld = [Dir | "/mstore"],
-    IdxFileNew = [Dir | "/mstore.new"],
+    IdxFileOld = filename:join([Dir, "mstore"]),
+    IdxFileNew = filename:join([Dir, "mstore.new"]),
 
     Files = list_mfiles(Dir),
     {ok, IO} = file:open(IdxFileNew, [write | ?OPTS]),
@@ -419,8 +422,9 @@ apply_opts(MStore, [_ | R]) ->
 
 
 chunks(Dir, Ext) ->
+    FileName = filename:join([Dir, "*" ++ Ext]),
     lists:sort([list_to_integer(filename:rootname(filename:basename(F))) ||
-                   F <- filelib:wildcard([Dir | "/*" ++ Ext])]).
+                   F <- filelib:wildcard(FileName)]).
 
 reindex_chunk(IO, File, Set) ->
     mfile:fold_idx(fun({entry, M}, Acc) ->
@@ -501,7 +505,9 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     FileBase = (Time div S)*S,
     mfile:close(F),
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = mfile:open(Base, FileBase, S, write),
+    {ok, F1} = mfile:open(Base, [{offset, FileBase},
+                                 {file_size, S},
+                                 {mode, write}]),
     {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2}, First]);
 
@@ -511,7 +517,9 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     Base = [D, $/, integer_to_list(FileBase)],
-    {ok, F1} = mfile:open(Base, FileBase, S, write),
+    {ok, F1} = mfile:open(Base, [{offset, FileBase},
+                                 {file_size, S},
+                                 {mode, write}]),
     {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
@@ -618,7 +626,8 @@ do_get(S,
 do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
     FileBase = (Time div S)*S,
     Base = filename:join([Dir, integer_to_list(FileBase)]),
-    {ok, F} = mfile:open(Base, FileBase, S, read),
+    {ok, F} = mfile:open(Base, [{offset, FileBase},
+                                {file_size, S}]),
     Result = mfile:read(F, DataSize, Metric, Time, Count),
     case Result of
         {ok, D} ->

@@ -72,7 +72,6 @@
 -export([
          open/1,
          open/2,
-         open/4,
          metrics/1,
          size/1,
          offset/1,
@@ -103,6 +102,12 @@
          }).
 -opaque mfile() :: #mfile{}.
 
+
+-type opt() :: {mode, read | write} |
+               {file_size, pos_integer()} |
+               {offset, non_neg_integer()}.
+-type opts() :: [opt()].
+
 -type fold_fun() :: fun((Metric :: binary(),
                          Offset :: non_neg_integer(),
                          Data :: binary(), AccIn :: any()) -> AccOut :: any()).
@@ -126,12 +131,21 @@
                   {ok, mfile()} |
                   {error, open_error_reason()}.
 open(File) ->
-    open(File, read).
+    open(File, []).
 
--spec open(file:filename_all(), read | write) ->
+-spec open(file:filename_all(), opts()) ->
                   {ok, mfile()} |
                   {error, open_error_reason()}.
-open(File, Mode) ->
+open(File, Opts) ->
+    Offset = case proplists:get_value(offset, Opts) of
+                 OffsetX when is_integer(OffsetX), OffsetX >= 0 -> OffsetX;
+                 undefined -> undefined
+             end,
+    Size = case proplists:get_value(file_size, Opts) of
+               SizeX when is_integer(SizeX), SizeX > 0 -> SizeX;
+               undefined -> undefined
+             end,
+    Mode = proplists:get_value(mode, Opts, read),
     FileOpts = case Mode of
                    read ->
                        [read | ?OPTS];
@@ -140,46 +154,21 @@ open(File, Mode) ->
                end,
     ReadIdx = read_idx(File),
     case ReadIdx of
-        {Offset, Size, Idx, Next} ->
+        {O, S, Idx, Next} when (Offset =:= undefined orelse Offset =:= O),
+                               (Size =:= undefined orelse Size =:= S) ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
-                    MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next},
-                    {ok, check_bitmap(MF, Mode)};
-                Error ->
-                    Error
-            end;
-        Error ->
-            Error
-    end.
-
--spec open(file:filename_all(), non_neg_integer(), pos_integer(), read | write) ->
-                  {ok, mfile()} |
-                  {error, open_error_reason()}.
-open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
-    FileOpts = case Mode of
-                   read ->
-                       [read | ?OPTS];
-                   write ->
-                       [read, write | ?OPTS]
-               end,
-    ReadIdx = read_idx(File),
-    case ReadIdx of
-        {O, S, Idx, Next} when Offset =:= O,
-                               Size =:= S ->
-            case file:open(File ++ ".mstore", FileOpts) of
-                {ok, F} ->
-                    MF = #mfile{index=Idx, name=File, file=F, offset=Offset,
-                                size=Size, next=Next},
+                    MF = #mfile{index=Idx, name=File, file=F, offset=O,
+                                size=S, next=Next},
                     {ok, check_bitmap(MF, Mode)};
                 E ->
                     E
             end;
-        {O, _, _, _} when Offset =/= O ->
+        {O, _, _, _} when Offset =/= O, Offset =/= undefined ->
             {error, offset_missmatch};
-        {_, S, _, _} when Size =/= S ->
+        {_, S, _, _} when Size =/= S, Size =/= undefined ->
             {error, size_missmatch};
-        _E ->
+        _E when Size =/= undefined, Offset =/= undefined  ->
             case file:open(File ++ ".mstore", [read, write | ?OPTS]) of
                 {ok, F} ->
                     M = #mfile{name=File, file=F, offset=Offset,
@@ -194,7 +183,9 @@ open(File, Offset, Size, Mode) when Offset >= 0, Size > 0 ->
                     {ok, M};
                 E ->
                     E
-            end
+            end;
+        E ->
+            E
     end.
 
 -spec metrics(mfile()) ->
