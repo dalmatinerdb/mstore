@@ -289,8 +289,8 @@ fold(MStore, FoldFun, Acc) ->
            ChunkSize :: pos_integer() | infinity,
            AccIn :: any()) ->
                   AccOut :: any().
-fold(#mstore{dir=Dir, data_size = DataSize}, Fun, Chunk, Acc) ->
-    serialize_dir(Dir, DataSize, Fun, Chunk, Acc).
+fold(#mstore{dir=Dir}, Fun, Chunk, Acc) ->
+    serialize_dir(Dir, Fun, Chunk, Acc).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -482,23 +482,23 @@ open_mfile(F) ->
 do_put(_, _, [], <<>>, Files) ->
     Files;
 
-do_put(MStore = #mstore{size=S, data_size = DataSize}, Metric,
+do_put(MStore = #mstore{size=S}, Metric,
        [{Time, Size} | R], InData,
        [{FileBase, F} | FileRest]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
-    {ok, F1} = mfile:write(F, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:write(F, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F1} | FileRest]);
 
-do_put(MStore = #mstore{size=S, data_size = DataSize}, Metric,
+do_put(MStore = #mstore{size=S}, Metric,
        [{Time, Size} | R], InData,
        [First, {FileBase, F}]) when
       ((Time div S)*S) =:= FileBase ->
     <<Data:Size/binary, DataRest/binary>> = InData,
-    {ok, F1} = mfile:write(F, DataSize, Metric, Time, Data),
+    {ok, F1} = mfile:write(F, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F1}, First]);
 
-do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
+do_put(MStore = #mstore{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
        [First, {_Other, F}]) ->
     <<Data:Size/binary, DataRest/binary>> = InData,
@@ -508,10 +508,10 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     {ok, F1} = mfile:open(Base, [{offset, FileBase},
                                  {file_size, S},
                                  {mode, write}]),
-    {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
+    {ok, F2} = mfile:write(F1, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2}, First]);
 
-do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
+do_put(MStore = #mstore{size=S, dir=D}, Metric,
        [{Time, Size} | R], InData,
        Files) when length(Files) =< 2 ->
     <<Data:Size/binary, DataRest/binary>> = InData,
@@ -520,7 +520,7 @@ do_put(MStore = #mstore{size=S, dir=D, data_size = DataSize}, Metric,
     {ok, F1} = mfile:open(Base, [{offset, FileBase},
                                  {file_size, S},
                                  {mode, write}]),
-    {ok, F2} = mfile:write(F1, DataSize, Metric, Time, Data),
+    {ok, F2} = mfile:write(F1, Metric, Time, Data),
     do_put(MStore, Metric, R, DataRest, [{FileBase, F2} | Files]).
 
 limit_files(MStore = #mstore{max_files = MaxFiles,
@@ -577,7 +577,7 @@ do_get(_, _, _, _, _, [], Acc) ->
 do_get(S, [{FileBase, F} | _] = FS,
        Dir, DataSize, Metric, [{Time, Count} | R], Acc)
   when ((Time div S)*S) =:= FileBase ->
-    case mfile:read(F, DataSize, Metric, Time, Count) of
+    case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
@@ -602,7 +602,7 @@ do_get(S,
        [_, {FileBase, F}] = FS,
        Dir, DataSize, Metric, [{Time, Count} | R], Acc)
   when ((Time div S)*S) =:= FileBase ->
-    case mfile:read(F, DataSize, Metric, Time, Count) of
+    case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
@@ -628,7 +628,7 @@ do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
     Base = filename:join([Dir, integer_to_list(FileBase)]),
     {ok, F} = mfile:open(Base, [{offset, FileBase},
                                 {file_size, S}]),
-    Result = mfile:read(F, DataSize, Metric, Time, Count),
+    Result = mfile:read(F, Metric, Time, Count),
     case Result of
         {ok, D} ->
             mfile:close(F),
@@ -655,10 +655,10 @@ do_get(S, FS, Dir, DataSize, Metric, [{Time, Count} | R], Acc) ->
     end.
 
 
-serialize_dir(Dir, DataSize, Fun, Chunk, Acc) ->
+serialize_dir(Dir, Fun, Chunk, Acc) ->
     Idxs = list_mfiles(Dir),
     lists:foldl(fun(I, AccIn) ->
-                        mfile:fold(I, DataSize, Fun, Chunk, AccIn)
+                        mfile:fold(I, Fun, Chunk, AccIn)
                 end, Acc, Idxs).
 
 do_fold_idx(IO, Chunk, Fun, AccIn, <<_L:16/integer, M:_L/binary, R/binary>>) ->

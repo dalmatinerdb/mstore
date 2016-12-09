@@ -75,11 +75,11 @@
          metrics/1,
          size/1,
          offset/1,
-         read/5,
+         read/4,
          bitmap/2,
-         write/5,
+         write/4,
          close/1,
-         fold/5,
+         fold/4,
          count/1,
          fold_idx/3
         ]).
@@ -207,22 +207,21 @@ offset(#mfile{offset = Offset}) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec read(mfile(), pos_integer(), binary(), non_neg_integer(), pos_integer()) ->
+-spec read(mfile(), binary(), non_neg_integer(), pos_integer()) ->
                   {ok, binary()} |
                   {error, read_error_reason()} |
                   eof.
 
-read(#mfile{offset=Offset, size=S, file=F, index=Idx},
-     DataSize, Metric, Position, Count)
+read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
   when Position >= Offset,
        (Position - Offset) + Count =< S ->
     case btrie:find(Metric, Idx) of
         error ->
             {error, not_found};
         {ok, Pos} ->
-            Base = Pos * S * DataSize,
-            P = Base+((Position - Offset) * DataSize),
-            file:pread(F, P, Count * DataSize)
+            Base = Pos * S * ?DATA_SIZE,
+            P = Base+((Position - Offset) * ?DATA_SIZE),
+            file:pread(F, P, Count * ?DATA_SIZE)
     end.
 
 %%--------------------------------------------------------------------
@@ -247,17 +246,15 @@ bitmap(M = #mfile{index = Idx}, Metric) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec write(mfile(), pos_integer(), binary(), non_neg_integer(), binary()) ->
+-spec write(mfile(), binary(), non_neg_integer(), binary()) ->
                    {ok | {error, atom()}, mfile()}.
 
-write(M=#mfile{offset=Offset, size=S},
-      DataSize, Metric, Position, Value)
+write(M=#mfile{offset=Offset, size=S}, Metric, Position, Value)
   when is_binary(Value),
        Position >= 0,
-       DataSize > 0,
        Position >= Offset,
-       (Position - Offset) + (byte_size(Value) div DataSize) =< S ->
-    do_write(M, DataSize, Metric, Position, Value).
+       (Position - Offset) + (byte_size(Value) div ?DATA_SIZE) =< S ->
+    do_write(M, Metric, Position, Value).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -275,15 +272,16 @@ close(MF = #mfile{file=F}) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec fold(file:filename_all() | mfile(), pos_integer(), fold_fun(), pos_integer(), term()) -> term().
+-spec fold(file:filename_all() | mfile(), fold_fun(), pos_integer(), term()) ->
+                  term().
 
-fold(#mfile{} = MFile, DataSize, Fun, Chunk, Acc) ->
+fold(#mfile{} = MFile, Fun, Chunk, Acc) ->
     lists:foldl(fun(M, AccIn) ->
-                        serialize_metric(MFile, DataSize, M, Fun, Chunk, AccIn)
+                        serialize_metric(MFile, M, Fun, Chunk, AccIn)
                 end, Acc, get_metrics(MFile));
-fold(BaseName, DataSize, Fun, Chunk, Acc) ->
+fold(BaseName, Fun, Chunk, Acc) ->
     {ok, MFile} = open_store(BaseName),
-    Res = fold(MFile, DataSize, Fun, Chunk, Acc),
+    Res = fold(MFile, Fun, Chunk, Acc),
     close(MFile),
     Res.
 
@@ -329,40 +327,39 @@ get_metrics(#mfile{index = M0}) ->
     M1 = lists:keysort(2, btrie:to_list(M0)),
     [M || {M, _} <- M1].
 
-serialize_metric(MFile, DataSize, Metric, Fun, infinity, Acc) ->
+serialize_metric(MFile, Metric, Fun, infinity, Acc) ->
     #mfile{offset=O,size=S} = MFile,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
 
-    case read(MFile, DataSize, Metric, O, S) of
+    case read(MFile, Metric, O, S) of
         {ok, Data} ->
-            serialize_binary(DataSize, Data, Fun1, Acc, O, <<>>);
+            serialize_binary(Data, Fun1, Acc, O, <<>>);
         eof ->
             Acc
     end;
 
-serialize_metric(MFile, DataSize, Metric, Fun, Chunk, Acc) ->
-    serialize_metric(MFile, DataSize, Metric, Fun, 0, Chunk, Acc).
+serialize_metric(MFile, Metric, Fun, Chunk, Acc) ->
+    serialize_metric(MFile, Metric, Fun, 0, Chunk, Acc).
 
 %% If we've read everything (Start = Size) we just return the acc
-serialize_metric(#mfile{size = _Size},
-                 _DataSize, _Metric, _Fun, _Start, _Chunk, Acc) when _Start == _Size ->
+serialize_metric(#mfile{size = _Size}, _Metric, _Fun, _Start, _Chunk, Acc)
+  when _Start == _Size ->
     Acc;
 
 %% If we have at least 'Chunk' left to read
 serialize_metric(MFile = #mfile{offset = O,
-                                size = Size},
-                 DataSize, Metric, Fun, Start, Chunk, Acc)
+                                size = Size}, Metric, Fun, Start, Chunk, Acc)
   when Start + Chunk < Size ->
     O1 = O + Start,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset + Start, Data, AccIn)
            end,
-    case read(MFile, DataSize, Metric, O1, Chunk) of
+    case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
-            Acc1 = serialize_binary(DataSize, Data, Fun1, Acc, O1, <<>>),
-            serialize_metric(MFile, DataSize, Metric, Fun, Start + Chunk, Chunk, Acc1);
+            Acc1 = serialize_binary(Data, Fun1, Acc, O1, <<>>),
+            serialize_metric(MFile, Metric, Fun, Start + Chunk, Chunk, Acc1);
         eof ->
             Acc
     end;
@@ -370,35 +367,35 @@ serialize_metric(MFile = #mfile{offset = O,
 %% We don't have a full chunk left to read.
 serialize_metric(MFile = #mfile{offset = O,
                                 size = Size},
-                 DataSize, Metric, Fun, Start, _Chunk, Acc) ->
+                 Metric, Fun, Start, _Chunk, Acc) ->
     Chunk = Size - Start,
     O1 = O + Start,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset + Start, Data, AccIn)
            end,
-    case read(MFile, DataSize, Metric, O1, Chunk) of
+    case read(MFile, Metric, O1, Chunk) of
         {ok, Data} ->
-            serialize_binary(DataSize, Data, Fun1, Acc, O1, <<>>);
+            serialize_binary(Data, Fun1, Acc, O1, <<>>);
         eof ->
             Acc
     end.
 
-serialize_binary(_DataSize, <<>>, _Fun, FunAcc, _O, <<>>) ->
+serialize_binary(<<>>, _Fun, FunAcc, _O, <<>>) ->
     FunAcc;
-serialize_binary(_DataSize, <<>>, Fun, FunAcc, O, Acc) ->
+serialize_binary(<<>>, Fun, FunAcc, O, Acc) ->
     Fun(O, Acc, FunAcc);
-serialize_binary(DataSize, <<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, <<>>) ->
-    VSize =DataSize - 1,
+serialize_binary(<<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, <<>>) ->
+    VSize = ?DATA_SIZE - 1,
     <<_:VSize/binary, R1/binary>> = R,
-    serialize_binary(DataSize, R1, Fun, FunAcc, O+1, <<>>);
-serialize_binary(DataSize, <<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, Acc) ->
+    serialize_binary(R1, Fun, FunAcc, O+1, <<>>);
+serialize_binary(<<?NONE:?TYPE_SIZE, R/binary>>, Fun, FunAcc, O, Acc) ->
     FunAcc1 = Fun(O, Acc, FunAcc),
-    VSize =DataSize - 1,
+    VSize = ?DATA_SIZE - 1,
     <<_:VSize/binary, R1/binary>> = R,
-    serialize_binary(DataSize, R1, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
-serialize_binary(DataSize, R, Fun, FunAcc, O, Acc) ->
-    <<V:DataSize/binary, R1/binary>> = R,
-    serialize_binary(DataSize, R1, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
+    serialize_binary(R1, Fun, FunAcc1, O+mmath_bin:length(Acc)+1, <<>>);
+serialize_binary(R, Fun, FunAcc, O, Acc) ->
+    <<V:?DATA_SIZE/binary, R1/binary>> = R,
+    serialize_binary(R1, Fun, FunAcc, O, <<Acc/binary, V/binary>>).
 
 open_store(BaseName) ->
     case read_idx(BaseName) of
@@ -416,7 +413,7 @@ open_store(BaseName) ->
     end.
 
 do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
-         DataSize, Metric, Position, Value) when
+         Metric, Position, Value) when
       is_binary(Metric),
       is_binary(Value) ->
 
@@ -439,8 +436,8 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
                 {M, Posx}
         end,
     M2 = update_bitmap(M1, Pos, Position, Value),
-    Base = Pos*S*DataSize,
-    P = Base+((Position - Offset)*DataSize),
+    Base = Pos * S * ?DATA_SIZE,
+    P = Base+((Position - Offset) * ?DATA_SIZE),
     R = file:pwrite(F, P, Value),
     {R, M2}.
 
@@ -555,7 +552,7 @@ update_bitmap(F = #mfile{name = File}) ->
               size = mfile:size(F),
               offset = offset(F)
              },
-    #acc{bitmap = B} = fold(F, ?DATA_SIZE, fun create_bitmap_fn/4, 4096, Acc0),
+    #acc{bitmap = B} = fold(F, fun create_bitmap_fn/4, 4096, Acc0),
     ok = file:write(IO, B),
     ok = file:close(IO),
     update_btime(F).

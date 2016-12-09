@@ -25,7 +25,7 @@ mfile(FileSize, Offset) ->
 
 write(M, Offset, Value) ->
     Bin = mmath_bin:from_list([Value]),
-    {ok, M1} = mfile:write(M, ?DATA_SIZE, ?M, Offset, Bin),
+    {ok, M1} = mfile:write(M, ?M, Offset, Bin),
     M1.
 
 insert(FileSize, Offset, Size) ->
@@ -38,16 +38,24 @@ insert(FileSize, Offset, Size) ->
 offset(Offset, FileSize) ->
     choose(Offset, Offset + FileSize - 1).
 
-%% reopen(M) ->
-%%     mfile:close(M)
-%%     {ok, M} = mfile:open(?DIR)
+reopen(M) ->
+    mfile:close(M),
+    {ok, M1} = mfile:open(filename:join([?DIR, "mfile"]),
+                          [{mode, write}]),
+    M1.
+
+reopen(FileSize, Offset, Size) ->
+    ?LAZY(?LET({S, T},
+               mfile(FileSize, Offset, Size - 1),
+               {{call, ?MODULE, reopen, [S]}, T})).
+
 mfile(FileSize, Offset, Size) ->
     ?LAZY(oneof(
             [{{call, ?MODULE, new, [FileSize, Offset, ?DIR]},
               {call, gb_trees, empty, []}} || Size == 0]
             ++ [frequency(
-                  [{9, insert(FileSize, Offset, Size)}%,
-                   %{1, reopen(FileSize, Size, MaxFiles)}
+                  [{9, insert(FileSize, Offset, Size)},
+                   {1, reopen(FileSize, Offset, Size)}
                   ]) || Size > 0])).
 
 offset() ->
