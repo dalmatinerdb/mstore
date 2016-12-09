@@ -568,7 +568,7 @@ write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
                       "read it! What shall we do?!?! For now we "
                       "just write YOLO! (read: this is stupid)\n"
                       "(Current) ~p > ~p (recorded)\n", [Current, OTime]),
-            fuck = write_bitmap_(F)
+            write_bitmap_(F)
     end.
 
 write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
