@@ -1,12 +1,12 @@
 {"1.1.0",
 [{<<"bitmap">>,{pkg,<<"ebitmap">>,<<"0.1.3">>},0},
  {<<"cf">>,{pkg,<<"cf">>,<<"0.2.2">>},1},
- {<<"mmath">>,{pkg,<<"mmath">>,<<"0.2.13">>},0},
+ {<<"mmath">>,{pkg,<<"mmath">>,<<"0.2.14">>},0},
  {<<"trie">>,{pkg,<<"trie">>,<<"1.6.0">>},0}]}.
 [
 {pkg_hash,[
  {<<"bitmap">>, <<"FFD9BD78CE733BD77AEF220567D7B76580F4C8A78D25A1926EBD936518DC87B4">>},
  {<<"cf">>, <<"7F2913FFF90ABCABD0F489896CFEB0B0674F6C8DF6C10B17A83175448029896C">>},
- {<<"mmath">>, <<"1B11E23B2D11E5D4897A30BAB3779CAAAB8E90EF82F3576D73ECE790DB0F4E57">>},
+ {<<"mmath">>, <<"7A9A2032A1BB34B02F4DEC4F2A8C1C87F115A5C4C950D4E782BF444353438E47">>},
  {<<"trie">>, <<"8D2B0C850A01B46FC4711AA1862D45D6AE3A0DA963127E44E6535EA88274D7D3">>}]}
 ].
