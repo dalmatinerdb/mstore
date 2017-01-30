@@ -98,12 +98,14 @@
           index = btrie:new(),
           next = 0,
           otime = undefined,
-          bitmaps = #{}
+          bitmaps = #{},
+          sync_bitmap
          }).
 -opaque mfile() :: #mfile{}.
 
 
 -type opt() :: {mode, read | write} |
+               {sync_bitmap, boolean()} |
                {file_size, pos_integer()} |
                {offset, non_neg_integer()}.
 -type opts() :: [opt()].
@@ -152,14 +154,16 @@ open(File, Opts) ->
                    write ->
                        [read, write | ?OPTS]
                end,
+    SyncBitmap = proplists:get_value(sync_bitmap, Opts, false),
+    M0 = #mfile{sync_bitmap = SyncBitmap},
     ReadIdx = read_idx(File),
     case ReadIdx of
         {O, S, Idx, Next} when (Offset =:= undefined orelse Offset =:= O),
                                (Size =:= undefined orelse Size =:= S) ->
             case file:open(File ++ ".mstore", FileOpts) of
                 {ok, F} ->
-                    MF = #mfile{index=Idx, name=File, file=F, offset=O,
-                                size=S, next=Next},
+                    MF = M0#mfile{index=Idx, name=File, file=F, offset=O,
+                                  size=S, next=Next},
                     {ok, check_bitmap(MF, Mode)};
                 E ->
                     E
@@ -171,8 +175,8 @@ open(File, Opts) ->
         _E when Size =/= undefined, Offset =/= undefined  ->
             case file:open(File ++ ".mstore", [read, write | ?OPTS]) of
                 {ok, F} ->
-                    M = #mfile{name=File, file=F, offset=Offset,
-                               size=Size, next=0},
+                    M = M0#mfile{name=File, file=F, offset=Offset,
+                                 size=Size, next=0},
                     file:write_file(File ++ ".idx",
                                     <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
                     %% We ensure taht if we create a new mstore we also create
@@ -441,6 +445,8 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
     R = file:pwrite(F, P, Value),
     {R, M2}.
 
+update_bitmap(M = #mfile{sync_bitmap = false}, _, _, _) ->
+    M;
 update_bitmap(M = #mfile{offset = Offset}, Pos, Position, Data) ->
     {B, M1 = #mfile{bitmaps = BMPs}} = get_bitmap(Pos, M),
     B1 = set_bitmap(Data, Position - Offset, B),

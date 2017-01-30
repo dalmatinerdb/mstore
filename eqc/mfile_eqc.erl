@@ -16,7 +16,8 @@
 new(FileSize, Offset, Dir) ->
     {ok, MF} = mfile:open(Dir ++ "/mfile", [{offset, Offset},
                                             {file_size, FileSize},
-                                            write]),
+                                            {model, write},
+                                            sync_bitmap]),
     MF.
 
 mfile(FileSize, Offset) ->
@@ -41,7 +42,7 @@ offset(Offset, FileSize) ->
 reopen(M) ->
     mfile:close(M),
     {ok, M1} = mfile:open(filename:join([?DIR, "mfile"]),
-                          [{mode, write}]),
+                          [{mode, write}, sync_bitmap]),
     M1.
 
 reopen(FileSize, Offset, Size) ->
