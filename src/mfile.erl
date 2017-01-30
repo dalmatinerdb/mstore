@@ -179,11 +179,14 @@ open(File, Opts) ->
                                  size=Size, next=0},
                     file:write_file(File ++ ".idx",
                                     <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE>>),
-                    %% We ensure taht if we create a new mstore we also create
-                    %% a bitmap file this allows us to distinguish between'
-                    %% existing mstore that is outdated and bitmap was not
-                    %% written.
-                    file:write_file(File ++ ".bitmap", <<>>),
+                    %% If bitmap syncing is enabled, We ensure taht if we create
+                    %% a new mstore we also create a bitmap file this allows us
+                    %% to distinguish between existing mstore that is outdated
+                    %% and bitmap was not written.
+                    case SyncBitmap of
+                        true -> file:write_file(File ++ ".bitmap", <<>>);
+                        false -> ok
+                    end,
                     {ok, M};
                 E ->
                     E
@@ -494,6 +497,9 @@ do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
             file:close(IO),
             E
     end.
+
+check_bitmap(F = #mfile{sync_bitmap = false}, _) ->
+    F;
 check_bitmap(F = #mfile{name = File}, read) ->
     case filelib:is_file(File ++ ".bitmap") of
         true ->
@@ -507,7 +513,6 @@ check_bitmap(F = #mfile{name = File}, read) ->
             %% bitmap
             update_bitmap(F)
     end;
-
 check_bitmap(F = #mfile{name = File}, write) ->
     case {filelib:last_modified(File ++ ".mstore"),
           filelib:last_modified(File ++ ".bitmap")} of
@@ -563,6 +568,8 @@ update_bitmap(F = #mfile{name = File}) ->
     ok = file:close(IO),
     update_btime(F).
 
+write_bitmap(F = #mfile{sync_bitmap = false}) ->
+    F;
 write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
     case {maps:size(BMPs), filelib:last_modified(File ++ ".bitmap")} of
         {0, _} ->
@@ -620,19 +627,30 @@ read_bitmap(Pos, M = #mfile{size = Size,
                      {ok, <<Size:64/unsigned, _/binary>> = Bx} ->
                          Bx;
                      %% If we can read but the size doesn't match (aka it's zero)
-                     %% this is an empty bitmap and we create a new one
+                     %% this is an empty bitmap and we have to fallback to
+                     %% reading from actual metric data
                      {ok, _} ->
-                         {ok, Bx} = bitmap:new([{size, Size}]),
-                         Bx;
+                         read_bitmap_fallback(Pos, M);
                      eof ->
-                         {ok, Bx} = bitmap:new([{size, Size}]),
-                         Bx
+                         read_bitmap_fallback(Pos, M)
                  end,
             ok = file:close(IO),
             {Br, update_btime(M)};
         _ ->
-            {ok, Bx} = bitmap:new([{size, Size}]),
+            Bx = read_bitmap_fallback(Pos, M),
             {Bx, M}
+    end.
+
+read_bitmap_fallback(Pos, #mfile{size = Size,
+                                 offset = Offset,
+                                 file = File}) ->
+    {ok, B} = bitmap:new([{size, Size}]),
+    P = (Pos * Size + Offset) * ?DATA_SIZE,
+    case file:pread(File, P, Size * ?DATA_SIZE) of
+        {ok, Data} ->
+            set_bitmap(Data, 0, B);
+        _ ->
+            B
     end.
 
 update_btime(M = #mfile{name = File, otime = undefined}) ->
