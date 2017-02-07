@@ -45,6 +45,7 @@
 -module(mstore).
 
 -export([
+         clone/1,
          new/2,
          open/1,
          open/2,
@@ -171,6 +172,18 @@ close(#mstore{files=Files}) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Clones a mstore, removing currently open files form it.
+%% @end
+%%--------------------------------------------------------------------
+-spec clone(mstore()) -> mstore().
+
+clone(MStore = #mstore{files=[]}) ->
+    MStore;
+clone(MStore) ->
+    MStore#mstore{files=[]}.
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Recursively deletes a metric set.
 %% @end
 %%--------------------------------------------------------------------
@@ -180,7 +193,7 @@ delete(MStore = #mstore{dir=Dir}) ->
     close(MStore),
     case file:list_dir(Dir) of
         {ok, Files} ->
-            Files1 = [[Dir, $/ | File] || File <- Files],
+            Files1 = [filename:join([Dir, File]) || File <- Files],
             [file:delete(F) || F <- Files1],
             file:del_dir(Dir);
         {error, enoent} ->
@@ -505,7 +518,7 @@ do_put(MStore = #mstore{size=S, dir=D}, Metric,
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
     mfile:close(F),
-    Base = [D, $/, integer_to_list(FileBase)],
+    Base = filename:join([D, integer_to_list(FileBase)]),
     {ok, F1} = mfile:open(Base, [{offset, FileBase},
                                  {file_size, S},
                                  {mode, write}]),
@@ -517,7 +530,7 @@ do_put(MStore = #mstore{size=S, dir=D}, Metric,
        Files) when length(Files) =< 2 ->
     <<Data:Size/binary, DataRest/binary>> = InData,
     FileBase = (Time div S)*S,
-    Base = [D, $/, integer_to_list(FileBase)],
+    Base = filename:join([D, integer_to_list(FileBase)]),
     {ok, F1} = mfile:open(Base, [{offset, FileBase},
                                  {file_size, S},
                                  {mode, write}]),
