@@ -443,7 +443,7 @@ do_write(M=#mfile{offset=Offset, size=S, file=F, index=Idx},
 
 update_bitmap(M = #mfile{offset = Offset}, Pos, Position, Data) ->
     {B, M1 = #mfile{bitmaps = BMPs}} = get_bitmap(Pos, M),
-    B1 = set_bitmap(Data, Position - Offset, B),
+    B1 = set_bitmap(Data, Position - Offset, [], B),
     M1#mfile{bitmaps = btrie:store(<<Pos:32>>, B1, BMPs)}.
 
 read_idx(BaseName) ->
@@ -525,14 +525,14 @@ create_bitmap_fn(Metric, Idx, Data,
                             offset = Offset,
                             metric = undefined}) ->
     {ok, B} = bitmap:new([{size, Size}]),
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     Acc#acc{metric = Metric, bitmap = B1};
 
 create_bitmap_fn(Metric, Idx, Data,
                  Acc = #acc{metric = Metric,
                             offset = Offset,
                             bitmap = B}) ->
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     Acc#acc{bitmap = B1};
 
 create_bitmap_fn(Metric, Idx, Data,
@@ -541,7 +541,7 @@ create_bitmap_fn(Metric, Idx, Data,
                             bitmap = BOld,
                             io = IO}) ->
     {ok, B} = bitmap:new([{size, Size}]),
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     ok = file:write(IO, BOld),
     Acc#acc{metric = Metric, bitmap = B1}.
 
@@ -584,15 +584,15 @@ write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
             update_btime(F)
     end.
 
-set_bitmap(<<>>, _I, B) ->
-    B;
+set_bitmap(<<>>, _I, Acc, B) ->
+    Acc1 = lists:reverse(Acc),
+    bitmap:set_many(Acc1, B);
 
-set_bitmap(<<0, _:56, R/binary>>, I, B) ->
-    set_bitmap(R, I + 1, B);
+set_bitmap(<<0, _:56, R/binary>>, I, Acc, B) ->
+    set_bitmap(R, I + 1, Acc, B);
 
-set_bitmap(<<_:64, R/binary>>, I, B) ->
-    {ok, B1} = bitmap:set(I, B),
-    set_bitmap(R, I + 1, B1).
+set_bitmap(<<_:64, R/binary>>, I, Acc, B) ->
+    set_bitmap(R, I + 1, [I | Acc], B).
 
 get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
     case btrie:find(<<Pos:32>>, BMPs) of
