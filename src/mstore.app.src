@@ -1,6 +1,6 @@
 {application,mstore,
              [{description,"Fast, flat metric store."},
-              {vsn,"0.2.6"},
+              {vsn,"0.2.10"},
               {registered,[]},
               {applications,[kernel,stdlib,mmath,trie,bitmap]},
               {env,[]},

@@ -98,7 +98,7 @@
           index = btrie:new(),
           next = 0,
           otime = undefined,
-          bitmaps = #{},
+          bitmaps = btrie:new(),
           sync_bitmap
          }).
 -opaque mfile() :: #mfile{}.
@@ -452,8 +452,8 @@ update_bitmap(M = #mfile{sync_bitmap = false}, _, _, _) ->
     M;
 update_bitmap(M = #mfile{offset = Offset}, Pos, Position, Data) ->
     {B, M1 = #mfile{bitmaps = BMPs}} = get_bitmap(Pos, M),
-    B1 = set_bitmap(Data, Position - Offset, B),
-    M1#mfile{bitmaps = maps:put(Pos, B1, BMPs)}.
+    B1 = set_bitmap(Data, Position - Offset, [], B),
+    M1#mfile{bitmaps = btrie:store(<<Pos:32>>, B1, BMPs)}.
 
 read_idx(BaseName) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
@@ -536,14 +536,14 @@ create_bitmap_fn(Metric, Idx, Data,
                             offset = Offset,
                             metric = undefined}) ->
     {ok, B} = bitmap:new([{size, Size}]),
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     Acc#acc{metric = Metric, bitmap = B1};
 
 create_bitmap_fn(Metric, Idx, Data,
                  Acc = #acc{metric = Metric,
                             offset = Offset,
                             bitmap = B}) ->
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     Acc#acc{bitmap = B1};
 
 create_bitmap_fn(Metric, Idx, Data,
@@ -552,7 +552,7 @@ create_bitmap_fn(Metric, Idx, Data,
                             bitmap = BOld,
                             io = IO}) ->
     {ok, B} = bitmap:new([{size, Size}]),
-    B1 = set_bitmap(Data, Idx - Offset, B),
+    B1 = set_bitmap(Data, Idx - Offset, [], B),
     ok = file:write(IO, BOld),
     Acc#acc{metric = Metric, bitmap = B1}.
 
@@ -571,7 +571,7 @@ update_bitmap(F = #mfile{name = File}) ->
 write_bitmap(F = #mfile{sync_bitmap = false}) ->
     F;
 write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
-    case {maps:size(BMPs), filelib:last_modified(File ++ ".bitmap")} of
+    case {btrie:size(BMPs), filelib:last_modified(File ++ ".bitmap")} of
         {0, _} ->
             F;
         {_, OTimeA} when OTimeA =< OTime ->
@@ -586,29 +586,29 @@ write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
 
 write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
     BSize = bitmap:bytes(Size),
-    case maps:to_list(BMPs) of
+    case btrie:to_list(BMPs) of
         [] ->
             F;
         Data ->
-            Writes = [{P * BSize, Bin} || {P, Bin} <- Data],
+            Writes = [{P * BSize, Bin} || {<<P:32>>, Bin} <- Data],
             {ok, IO} = file:open(File ++ ".bitmap", [raw, binary, write]),
             ok = file:pwrite(IO, Writes),
             ok = file:close(IO),
             update_btime(F)
     end.
 
-set_bitmap(<<>>, _I, B) ->
-    B;
+set_bitmap(<<>>, _I, Acc, B) ->
+    Acc1 = lists:reverse(Acc),
+    bitmap:set_many(Acc1, B);
 
-set_bitmap(<<0, _:56, R/binary>>, I, B) ->
-    set_bitmap(R, I + 1, B);
+set_bitmap(<<0, _:56, R/binary>>, I, Acc, B) ->
+    set_bitmap(R, I + 1, Acc, B);
 
-set_bitmap(<<_:64, R/binary>>, I, B) ->
-    {ok, B1} = bitmap:set(I, B),
-    set_bitmap(R, I + 1, B1).
+set_bitmap(<<_:64, R/binary>>, I, Acc, B) ->
+    set_bitmap(R, I + 1, [I | Acc], B).
 
 get_bitmap(Pos, M = #mfile{bitmaps = BMPs}) ->
-    case maps:find(Pos, BMPs) of
+    case btrie:find(<<Pos:32>>, BMPs) of
         {ok, B} ->
             {B, M};
         error ->
@@ -648,7 +648,7 @@ read_bitmap_fallback(Pos, #mfile{size = Size,
     P = (Pos * Size + Offset) * ?DATA_SIZE,
     case file:pread(File, P, Size * ?DATA_SIZE) of
         {ok, Data} ->
-            set_bitmap(Data, 0, B);
+            set_bitmap(Data, 0, [], B);
         _ ->
             B
     end.
