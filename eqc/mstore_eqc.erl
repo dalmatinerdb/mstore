@@ -90,18 +90,22 @@ string() ->
 unlist(Vs) ->
     [E] = mmath_bin:to_list(Vs),
     E.
+read_opts() ->
+    oneof([
+           [],
+           [one_off]]).
 
 %%%-------------------------------------------------------------------
 %%% Properties
 %%%-------------------------------------------------------------------
 prop_read_write() ->
-    ?FORALL({Metric, Size, Time, Data},
-            {string(), size(), offset(), non_empty_int_list()},
+    ?FORALL({Metric, Size, Time, Data, Opts},
+            {string(), size(), offset(), non_empty_int_list(), read_opts()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
                 {ok, S1} = mstore:new(?DIR, [{file_size, Size}]),
                 S2 = mstore:put(S1, Metric, Time, Data),
-                {ok, Res1} = mstore:get(S2, Metric, Time, length(Data)),
+                {ok, Res1} = mstore:get(S2, Metric, Time, length(Data), Opts),
                 Res2 = mmath_bin:to_list(Res1),
                 Metrics = btrie:fetch_keys(mstore:metrics(S2)),
                 mstore:delete(S2),
@@ -110,8 +114,9 @@ prop_read_write() ->
             end).
 
 prop_read_len() ->
-    ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset},
-            {string(), size(), offset(), non_empty_int_list(), int(), int()},
+    ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset, Opts},
+            {string(), size(), offset(), non_empty_int_list(), int(), int(),
+             read_opts()},
             ?IMPLIES((Time + TimeOffset) > 0 andalso
                                                (length(Data) + LengthOffset) > 0,
                      begin
@@ -120,20 +125,19 @@ prop_read_len() ->
                          S2 = mstore:put(S1, Metric, Time, Data),
                          ReadL = length(Data) + LengthOffset,
                          ReadT = Time + TimeOffset,
-                         {ok, Read} = mstore:get(S2, Metric, ReadT, ReadL),
+                         {ok, Read} = mstore:get(S2, Metric, ReadT, ReadL, Opts),
                          mstore:delete(S2),
                          mmath_bin:length(Read) == ReadL
                      end)).
 
 prop_gb_comp() ->
-    ?FORALL({FileSize, MaxFiles}, {size(), max_files()},
+    ?FORALL({FileSize, MaxFiles, Opts}, {size(), max_files(), read_opts()},
             ?FORALL(D, store(FileSize, MaxFiles),
                     begin
                         os:cmd("rm -r " ++ ?DIR),
                         {S, T} = eval(D),
                         L = gb_trees:to_list(T),
-                        L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
-                        mstore:delete(S),
+                        L1 = [{mstore:get(S, ?M, T1, 1, Opts), V} || {T1, V} <- L],
                         L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
                         L3 = [true || {_V, _V} <- L2],
                         Len = length(L),

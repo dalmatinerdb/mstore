@@ -54,6 +54,7 @@
          delete/2,
          reindex/1,
          get/4,
+         get/5,
          bitmap/3,
          open_mfile/1,
          put/4,

@@ -152,7 +152,7 @@ open(File, Opts) ->
     Size = case proplists:get_value(file_size, Opts) of
                SizeX when is_integer(SizeX), SizeX > 0 -> SizeX;
                undefined -> undefined
-             end,
+           end,
     Mode = proplists:get_value(mode, Opts, read),
     FileOpts = case Mode of
                    read ->
@@ -234,16 +234,16 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
 
 one_off_read(File, Metric, Position, Count) ->
     IdxRes = fold_idx(fun({init, Offset, Size}, undefined)
-                         when Position >= Offset,
-                              (Position - Offset) + Count =< Size->
-                           {stop, not_found};
-                      ({init, Offset, Size}, undefined) ->
-                           {Offset, Size, 0};
-                      ({entry, AMetric}, Res) when AMetric =:= Metric ->
-                           {stop, {found, Res}};
-                      ({entry, _M}, {Offset, Size, N}) ->
-                           {ok, {Offset, Size, N + 1}}
-                   end, 0, File),
+                            when Position >= Offset,
+                                 (Position - Offset) + Count =< Size->
+                              {ok, {Offset, Size, 0}};
+                         ({init, _Offset, _Size}, undefined) ->
+                              {stop, not_found};
+                         ({entry, AMetric}, Res) when AMetric =:= Metric ->
+                              {stop, {found, Res}};
+                         ({entry, _M}, {Offset, Size, N}) ->
+                              {ok, {Offset, Size, N + 1}}
+                      end, undefined, File),
     case IdxRes of
         {found, {Offset, Size, Pos}} ->
             %% do read!
@@ -510,7 +510,7 @@ fold_idx(Fun, Acc0, Chunk, RootName) ->
 
 do_fold_idx(IO, Chunk, Fun, AccIn, <<_L:16/integer, M:_L/binary, R/binary>>) ->
     case Fun({entry, M}, AccIn) of
-        {ok, Acc} -> 
+        {ok, Acc} ->
             do_fold_idx(IO, Chunk, Fun, Acc, R);
         {stop, Acc} ->
             file:close(IO),
