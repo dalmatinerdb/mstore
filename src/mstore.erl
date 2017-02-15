@@ -436,9 +436,9 @@ chunks(Dir, Ext) ->
 reindex_chunk(IO, File, Set) ->
     mfile:fold_idx(fun({entry, M}, Acc) ->
                            ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
-                           btrie:store(M, Acc);
+                           {ok, btrie:store(M, Acc)};
                       (_, Acc) ->
-                           Acc
+                           {ok, Acc}
                    end, Set, File).
 
 index_header(#mstore{size=FileSize}) ->
