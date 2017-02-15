@@ -95,6 +95,8 @@
 -type new_opt() ::
         {file_size, pos_integer()}.
 
+-type read_opt() :: one_off.
+
 %%--------------------------------------------------------------------
 %% Public API
 %%--------------------------------------------------------------------
@@ -237,20 +239,31 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
         mstore(),
         binary(),
         non_neg_integer(),
-        pos_integer()) ->
+        pos_integer(), [read_opt()]) ->
                  {'error',atom()} |
                  {ok, binary()}.
 
 get(#mstore{size=S, files=FS, dir=Dir},
-    Metric, Time, Count) when
+    Metric, Time, Count, Opts) when
       is_binary(Metric),
       is_integer(Time), Time >= 0,
       is_integer(Count), Count > 0 ->
     ?DT_READ_ENTRY(Metric, Time, Count),
     Parts = make_splits(Time, Count, S),
-    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
+    R = do_get(S, FS, Dir, Metric, Parts, <<>>, Opts),
     ?DT_READ_RETURN,
     R.
+
+-spec get(
+        mstore(),
+        binary(),
+        non_neg_integer(),
+        pos_integer()) ->
+                 {'error',atom()} |
+                 {ok, binary()}.
+
+get(MStore, Metric, Time, Count)  ->
+    get(MStore, Metric, Time, Count, []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -585,11 +598,11 @@ do_get_bitmap(S, _Files, Dir, Metric, Time) ->
             {error, not_found}
     end.
 
-do_get(_, _, _, _, [], Acc) ->
+do_get(_, _, _, _, [], Acc, _Opts) ->
     {ok, Acc};
 
 do_get(S, [{FileBase, F} | _] = FS,
-       Dir, Metric, [{Time, Count} | R], Acc)
+       Dir, Metric, [{Time, Count} | R], Acc, Opts)
   when ((Time div S)*S) =:= FileBase ->
     case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
@@ -601,20 +614,20 @@ do_get(S, [{FileBase, F} | _] = FS,
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
         {error,not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
             E
     end;
 
 do_get(S,
        [_, {FileBase, F}] = FS,
-       Dir, Metric, [{Time, Count} | R], Acc)
+       Dir, Metric, [{Time, Count} | R], Acc, Opts)
   when ((Time div S)*S) =:= FileBase ->
     case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
@@ -626,26 +639,33 @@ do_get(S,
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
         {error,not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
             E
     end;
 
-do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
+do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc, Opts) ->
     FileBase = (Time div S)*S,
     Base = filename:join([Dir, integer_to_list(FileBase)]),
-    {ok, F} = mfile:open(Base, [{offset, FileBase},
-                                {file_size, S}]),
-    Result = mfile:read(F, Metric, Time, Count),
+    Result = case proplists:get_bool(one_off, Opts) of
+                 true ->
+                     Base = filename:join([Dir, integer_to_list(FileBase)]),
+                     mfile:one_off_read(Base, Metric, Time, Count);
+                 false ->
+                     {ok, F} = mfile:open(Base, [{offset, FileBase},
+                                                 {file_size, S}]),
+                     ReadRes = mfile:read(F, Metric, Time, Count),
+                     mfile:close(F),
+                     ReadRes
+             end,
     case Result of
         {ok, D} ->
-            mfile:close(F),
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
                        L when L < Count ->
@@ -654,17 +674,14 @@ do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
-        {error,not_found} ->
-            mfile:close(F),
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
+        {error, not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
-            mfile:close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
-            mfile:close(F),
             E
     end.
 

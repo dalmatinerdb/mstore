@@ -76,6 +76,7 @@
          size/1,
          offset/1,
          read/4,
+         one_off_read/4,
          bitmap/2,
          write/4,
          close/1,
@@ -230,6 +231,32 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             P = Base + ((Position - Offset) * ?DATA_SIZE),
             file:pread(F, P, Count * ?DATA_SIZE)
     end.
+
+one_off_read(File, Metric, Position, Count) ->
+    IdxRes = fold_idx(fun({init, Offset, Size}, undefined)
+                         when Position >= Offset,
+                              (Position - Offset) + Count =< Size->
+                           {stop, not_found};
+                      ({init, Offset, Size}, undefined) ->
+                           {Offset, Size, 0};
+                      ({entry, AMetric}, Res) when AMetric =:= Metric ->
+                           {stop, {found, Res}};
+                      ({entry, _M}, {Offset, Size, N}) ->
+                           {ok, {Offset, Size, N + 1}}
+                   end, 0, File),
+    case IdxRes of
+        {found, {Offset, Size, Pos}} ->
+            %% do read!
+            Base = Pos * Size * ?DATA_SIZE,
+            P = Base + ((Position - Offset) * ?DATA_SIZE),
+            {ok, F} = file:open(File ++ ".mstore", [read | ?OPTS]),
+            Res = file:pread(F, P, Count * ?DATA_SIZE),
+            file:close(F),
+            Res;
+        _ ->
+            {error, not_found}
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @doc Fetches the bitmap for a metric
