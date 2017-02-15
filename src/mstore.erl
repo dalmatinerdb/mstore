@@ -80,10 +80,10 @@
 -endif.
 
 -record(mstore, {
-          size :: pos_integer(),
-          max_files = 2 :: non_neg_integer(),
-          files = [] :: [{non_neg_integer(), mfile:mfile()}],
-          dir :: string(),
+          size              :: pos_integer(),
+          max_files = 2     :: non_neg_integer(),
+          files = []        :: [{non_neg_integer(), mfile:mfile()}],
+          dir               :: string(),
           metrics = delayed :: btrie:btrie() | delayed
          }).
 
@@ -144,15 +144,16 @@ open(Dir) ->
 -spec open(Dir :: string(), [open_opt()]) ->
                   {ok, mstore()} | {error, enoent | not_found | invalid_file}.
 open(Dir, Opts) ->
-    MStore = apply_opts(#mstore{dir=Dir}, Opts),
     FullIndexRead = proplists:get_bool(preload_index, Opts),
     case open_mfile(Dir, FullIndexRead) of
         {ok, FileSize, Metrics} ->
-            {ok, MStore#mstore{metrics=Metrics, size=FileSize}};
+            MStore = apply_opts(#mstore{dir=Dir, metrics=Metrics,
+                                        size = FileSize}, Opts),
+            {ok, MStore#mstore{}};
         Error ->
             Error
     end.
-            
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -268,11 +269,11 @@ get(MStore, Metric, Time, Count)  ->
         mstore(),
         binary(),
         non_neg_integer()) ->
-                 {'error',atom()} |
-                 {ok, bitmap:bitmap()}.
+                    {'error',atom()} |
+                    {ok, bitmap:bitmap()}.
 
 bitmap(#mstore{size=S, files=FS, dir=Dir},
-    Metric, Time) when
+       Metric, Time) when
       is_binary(Metric),
       is_integer(Time), Time >= 0 ->
     R = do_get_bitmap(S, FS, Dir, Metric, Time),
@@ -511,7 +512,7 @@ maybe_read_index(IO, Chunk, R, true) ->
     do_fold_idx(IO, Chunk,
                 fun({entry, M}, Acc) ->
                         btrie:store(M, Acc)
-                end, btrie:new(), R);    
+                end, btrie:new(), R);
 maybe_read_index(IO, _Chunk, _R, false) ->
     file:close(IO),
     delayed.
