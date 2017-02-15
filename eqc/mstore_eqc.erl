@@ -33,7 +33,8 @@ reopen(FileSize, Size, MaxFiles) ->
                store(FileSize, Size-1, MaxFiles),
                {oneof(
                   [{call, ?MODULE, do_reindex, [S]},
-                   {call, ?MODULE, renew, [S, FileSize, max_files(), ?DIR]},
+                   {call, ?MODULE, renew, [S, FileSize, max_files(), ?DIR,
+                                           new_opts()]},
                    {call, ?MODULE, do_reopen, [S, max_files(), ?DIR]}]), T})).
 
 delete(FileSize, Size, MaxFiles) ->
@@ -45,7 +46,7 @@ delete(FileSize, Size, MaxFiles) ->
 
 store(FileSize, Size, MaxFiles) ->
     ?LAZY(oneof(
-            [{{call, ?MODULE, new, [FileSize, MaxFiles, ?DIR]},
+            [{{call, ?MODULE, new, [FileSize, MaxFiles, ?DIR, new_opts()]},
               {call, gb_trees, empty, []}} || Size == 0]
             ++ [frequency(
                   [{9, insert(FileSize, Size, MaxFiles)},
@@ -72,14 +73,17 @@ do_reopen(Old, MaxFiles, Dir) ->
     {ok, MSet} = mstore:open(Dir, [{max_files, MaxFiles}]),
     MSet.
 
-renew(Old, FileSize, MaxFiles, Dir) ->
+renew(Old, FileSize, MaxFiles, Dir, Opts) ->
     ok = mstore:close(Old),
-    new(FileSize, MaxFiles, Dir).
+    new(FileSize, MaxFiles, Dir, Opts).
 
-new(FileSize, MaxFiles, Dir) ->
+new(FileSize, MaxFiles, Dir, Opts) ->
     {ok, MSet} = mstore:new(Dir, [{file_size, FileSize},
-                                  {max_files, MaxFiles}]),
+                                  {max_files, MaxFiles} | Opts]),
     MSet.
+
+new_opts() ->
+    oneof([[], [preload_index]]).
 
 offset() ->
     choose(0, 5000).
@@ -107,8 +111,9 @@ prop_read_write() ->
                 S2 = mstore:put(S1, Metric, Time, Data),
                 {ok, Res1} = mstore:get(S2, Metric, Time, length(Data), Opts),
                 Res2 = mmath_bin:to_list(Res1),
-                Metrics = btrie:fetch_keys(mstore:metrics(S2)),
-                mstore:delete(S2),
+                {Set, S3} = mstore:metrics(S2),
+                Metrics = btrie:fetch_keys(Set),
+                mstore:delete(S3),
                 Res2 == Data andalso
                     Metrics == [Metric]
             end).
