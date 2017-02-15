@@ -54,8 +54,8 @@
          delete/2,
          reindex/1,
          get/4,
+         get/5,
          bitmap/3,
-         open_mfile/1,
          put/4,
          metrics/1,
          count/1,
@@ -80,20 +80,22 @@
 -endif.
 
 -record(mstore, {
-          size,
-          max_files = 2,
-          files=[],
-          dir,
-          metrics = btrie:new()
+          size              :: pos_integer(),
+          max_files = 2     :: non_neg_integer(),
+          files = []        :: [{non_neg_integer(), mfile:mfile()}],
+          dir               :: string(),
+          metrics = delayed :: btrie:btrie() | delayed
          }).
 
 -opaque mstore() :: #mstore{}.
 
 -type open_opt() ::
-        {max_files, pos_integer()}.
+        {max_files, pos_integer()} | preload_index.
 
 -type new_opt() ::
         {file_size, pos_integer()}.
+
+-type read_opt() :: one_off.
 
 %%--------------------------------------------------------------------
 %% Public API
@@ -109,32 +111,24 @@
                  {ok, mstore()} |
                  {error, filesize_missmatch}.
 
-new(Dir, Opts) when (is_list(Dir) orelse is_binary(Dir)) , is_list(Opts) ->
+new(Dir, Opts) when is_binary(Dir) ->
+    new(binary_to_list(Dir), Opts);
+new(Dir, Opts) when is_list(Dir) , is_list(Opts) ->
     {file_size, FileSize} = proplists:lookup(file_size, Opts),
-    case new_(FileSize, Dir) of
-        {ok, M} ->
-            {ok, apply_opts(M, Opts)};
-        E ->
-            E
-    end.
-
-new_(FileSize, Dir) when
-      is_integer(FileSize), FileSize > 0,
-      is_binary(Dir) ->
-    new_(FileSize, binary_to_list(Dir));
-
-new_(FileSize, Dir) ->
-    IdxFile = filename:join([Dir, "mstore"]),
-    case open_mfile(IdxFile) of
+    MStore = apply_opts(#mstore{dir=Dir, size=FileSize}, Opts),
+    FullIndexRead = proplists:get_bool(preload_index, Opts),
+    case open_mfile(Dir, FullIndexRead) of
         {ok, F, _Metrics} when F =/= FileSize ->
             {error, filesize_missmatch};
-        {ok, F,  Metrics} ->
-            {ok, #mstore{size=F, dir=Dir, metrics=Metrics}};
+        {ok, _F, Metrics} ->
+            {ok, MStore#mstore{metrics=Metrics}};
+        {error, invalid_file} = E ->
+            E;
         _ ->
-            file:make_dir(Dir),
-            MStore = #mstore{size=FileSize, dir=Dir},
+            ok = file:make_dir(Dir),
+            IdxFile = filename:join([Dir, "mstore"]),
             ok = file:write_file(IdxFile, index_header(MStore)),
-            {ok, MStore}
+            {ok, MStore#mstore{metrics=btrie:new()}}
     end.
 
 %%--------------------------------------------------------------------
@@ -150,14 +144,16 @@ open(Dir) ->
 -spec open(Dir :: string(), [open_opt()]) ->
                   {ok, mstore()} | {error, enoent | not_found | invalid_file}.
 open(Dir, Opts) ->
-    case open_mfile(filename:join([Dir, "mstore"])) of
+    FullIndexRead = proplists:get_bool(preload_index, Opts),
+    case open_mfile(Dir, FullIndexRead) of
         {ok, FileSize, Metrics} ->
-            M =  #mstore{size=FileSize, dir=Dir,
-                         metrics=Metrics},
-            {ok, apply_opts(M, Opts)};
-        E ->
-            E
+            MStore = apply_opts(#mstore{dir=Dir, metrics=Metrics,
+                                        size = FileSize}, Opts),
+            {ok, MStore#mstore{}};
+        Error ->
+            Error
     end.
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -237,20 +233,31 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
         mstore(),
         binary(),
         non_neg_integer(),
-        pos_integer()) ->
+        pos_integer(), [read_opt()]) ->
                  {'error',atom()} |
                  {ok, binary()}.
 
 get(#mstore{size=S, files=FS, dir=Dir},
-    Metric, Time, Count) when
+    Metric, Time, Count, Opts) when
       is_binary(Metric),
       is_integer(Time), Time >= 0,
       is_integer(Count), Count > 0 ->
     ?DT_READ_ENTRY(Metric, Time, Count),
     Parts = make_splits(Time, Count, S),
-    R = do_get(S, FS, Dir, Metric, Parts, <<>>),
+    R = do_get(S, FS, Dir, Metric, Parts, <<>>, Opts),
     ?DT_READ_RETURN,
     R.
+
+-spec get(
+        mstore(),
+        binary(),
+        non_neg_integer(),
+        pos_integer()) ->
+                 {'error',atom()} |
+                 {ok, binary()}.
+
+get(MStore, Metric, Time, Count)  ->
+    get(MStore, Metric, Time, Count, []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -262,11 +269,11 @@ get(#mstore{size=S, files=FS, dir=Dir},
         mstore(),
         binary(),
         non_neg_integer()) ->
-                 {'error',atom()} |
-                 {ok, bitmap:bitmap()}.
+                    {'error',atom()} |
+                    {ok, bitmap:bitmap()}.
 
 bitmap(#mstore{size=S, files=FS, dir=Dir},
-    Metric, Time) when
+       Metric, Time) when
       is_binary(Metric),
       is_integer(Time), Time >= 0 ->
     R = do_get_bitmap(S, FS, Dir, Metric, Time),
@@ -315,6 +322,10 @@ put(MStore, Metric, Time, [V0 | _] = Values)
 put(MStore, Metric, Time, V) when is_integer(V) ->
     put(MStore, Metric, Time, mmath_bin:from_list([V]));
 
+put(MStore = #mstore{metrics = delayed}, Metric, Time, Value) ->
+    {ok, MStore1} = load_index(MStore),
+    put(MStore1, Metric, Time, Value);
+
 put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms},
     Metric, Time, Value)
   when is_binary(Value),
@@ -346,10 +357,13 @@ put(MStore = #mstore{size=S, files=CurFiles, metrics=Ms},
 %% @end
 %%--------------------------------------------------------------------
 
--spec metrics(mstore()) -> btrie:btrie().
+-spec metrics(mstore()) -> {btrie:btrie(), mstore()}.
 
-metrics(#mstore{metrics=M}) ->
-    M.
+metrics(MStore = #mstore{metrics=delayed}) ->
+    {ok, MStore1} = load_index(MStore),
+    metrics(MStore1);
+metrics(MStore = #mstore{metrics=M}) ->
+    {M, MStore}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -358,7 +372,7 @@ metrics(#mstore{metrics=M}) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec count(mstore()) -> non_neg_integer().
+-spec count(mstore() | string()) -> non_neg_integer().
 count(#mstore{dir=Dir}) ->
     count(Dir);
 count(Dir) when is_list(Dir) ->
@@ -427,6 +441,13 @@ apply_opts(MStore, [{max_files, N} | R]) when is_integer(N), N >= 0 ->
 apply_opts(MStore, [_ | R]) ->
     apply_opts(MStore, R).
 
+load_index(MStore = #mstore{metrics = delayed, dir = Dir}) ->
+    case open_mfile(Dir, true) of
+        {ok, FileSize, Metrics} ->
+            {ok, MStore#mstore{size = FileSize, metrics = Metrics}};
+        E ->
+            E
+    end.
 
 chunks(Dir, Ext) ->
     FileName = filename:join([Dir, "*" ++ Ext]),
@@ -436,9 +457,9 @@ chunks(Dir, Ext) ->
 reindex_chunk(IO, File, Set) ->
     mfile:fold_idx(fun({entry, M}, Acc) ->
                            ok = file:write(IO, <<(byte_size(M)):16/integer, M/binary>>),
-                           btrie:store(M, Acc);
+                           {ok, btrie:store(M, Acc)};
                       (_, Acc) ->
-                           Acc
+                           {ok, Acc}
                    end, Set, File).
 
 index_header(#mstore{size=FileSize}) ->
@@ -457,30 +478,24 @@ make_splits(Time, Count, Size, Acc) ->
             make_splits(Time + Inc, Count - Inc, Size, [{Time, Inc} | Acc])
     end.
 
-open_mfile(F) ->
+
+
+open_mfile(Dir, FullRead) ->
+    F = filename:join([Dir, "mstore"]),
     Chunk = 4*1024,
     case file:open(F, [read | ?OPTS]) of
         {ok, IO} ->
             case file:read(IO, Chunk) of
                 {ok, <<2:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE, R/binary>>} ->
-                    Set = do_fold_idx(IO, Chunk,
-                                      fun({entry, M}, Acc) ->
-                                              btrie:store(M, Acc)
-                                      end, btrie:new(), R),
+                    Set = maybe_read_index(IO, Chunk, R, FullRead),
                     {ok, FileSize, Set};
                 {ok, <<3:16/?SIZE_TYPE, FileSize:64/?SIZE_TYPE,
                        _:64/?SIZE_TYPE, R/binary>>} ->
-                    Set = do_fold_idx(IO, Chunk,
-                                      fun({entry, M}, Acc) ->
-                                              btrie:store(M, Acc)
-                                      end, btrie:new(), R),
+                    Set = maybe_read_index(IO, Chunk, R, FullRead),
                     {ok, FileSize, Set};
                 {ok, <<?VERSION:16/?SIZE_TYPE,
                        FileSize:64/?SIZE_TYPE, R/binary>>} ->
-                    Set = do_fold_idx(IO, Chunk,
-                                      fun({entry, M}, Acc) ->
-                                              btrie:store(M, Acc)
-                                      end, btrie:new(), R),
+                    Set = maybe_read_index(IO, Chunk, R, FullRead),
                     {ok, FileSize, Set};
                 {ok, _} ->
                     file:close(IO),
@@ -492,6 +507,15 @@ open_mfile(F) ->
         E ->
             E
     end.
+
+maybe_read_index(IO, Chunk, R, true) ->
+    do_fold_idx(IO, Chunk,
+                fun({entry, M}, Acc) ->
+                        btrie:store(M, Acc)
+                end, btrie:new(), R);
+maybe_read_index(IO, _Chunk, _R, false) ->
+    file:close(IO),
+    delayed.
 
 do_put(_, _, [], <<>>, Files) ->
     Files;
@@ -585,11 +609,11 @@ do_get_bitmap(S, _Files, Dir, Metric, Time) ->
             {error, not_found}
     end.
 
-do_get(_, _, _, _, [], Acc) ->
+do_get(_, _, _, _, [], Acc, _Opts) ->
     {ok, Acc};
 
 do_get(S, [{FileBase, F} | _] = FS,
-       Dir, Metric, [{Time, Count} | R], Acc)
+       Dir, Metric, [{Time, Count} | R], Acc, Opts)
   when ((Time div S)*S) =:= FileBase ->
     case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
@@ -601,20 +625,20 @@ do_get(S, [{FileBase, F} | _] = FS,
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
         {error,not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
             E
     end;
 
 do_get(S,
        [_, {FileBase, F}] = FS,
-       Dir, Metric, [{Time, Count} | R], Acc)
+       Dir, Metric, [{Time, Count} | R], Acc, Opts)
   when ((Time div S)*S) =:= FileBase ->
     case mfile:read(F, Metric, Time, Count) of
         {ok, D} ->
@@ -626,26 +650,33 @@ do_get(S,
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
         {error,not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
             E
     end;
 
-do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
+do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc, Opts) ->
     FileBase = (Time div S)*S,
     Base = filename:join([Dir, integer_to_list(FileBase)]),
-    {ok, F} = mfile:open(Base, [{offset, FileBase},
-                                {file_size, S}]),
-    Result = mfile:read(F, Metric, Time, Count),
+    Result = case proplists:get_bool(one_off, Opts) of
+                 true ->
+                     Base = filename:join([Dir, integer_to_list(FileBase)]),
+                     mfile:one_off_read(Base, Metric, Time, Count);
+                 false ->
+                     {ok, F} = mfile:open(Base, [{offset, FileBase},
+                                                 {file_size, S}]),
+                     ReadRes = mfile:read(F, Metric, Time, Count),
+                     mfile:close(F),
+                     ReadRes
+             end,
     case Result of
         {ok, D} ->
-            mfile:close(F),
             Acc1 = <<Acc/binary, D/binary>>,
             Acc2 = case mmath_bin:length(D) of
                        L when L < Count ->
@@ -654,17 +685,14 @@ do_get(S, FS, Dir, Metric, [{Time, Count} | R], Acc) ->
                        _ ->
                            Acc1
                    end,
-            do_get(S, FS, Dir, Metric, R, Acc2);
-        {error,not_found} ->
-            mfile:close(F),
+            do_get(S, FS, Dir, Metric, R, Acc2, Opts);
+        {error, not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
-            mfile:close(F),
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
-            do_get(S, FS, Dir, Metric, R, Acc1);
+            do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         E ->
-            mfile:close(F),
             E
     end.
 

@@ -76,6 +76,7 @@
          size/1,
          offset/1,
          read/4,
+         one_off_read/4,
          bitmap/2,
          write/4,
          close/1,
@@ -84,7 +85,7 @@
          fold_idx/3
         ]).
 
--export_type([mfile/0, fold_fun/0]).
+-export_type([mfile/0, fold_fun/0, idx_fold_fun/0]).
 
 -include_lib("mmath/include/mmath.hrl").
 
@@ -119,6 +120,13 @@
 
 -type read_error_reason() :: file:posix() | badarg | terminated | not_found.
 
+-type read_idx_arg() :: {init, non_neg_integer(), pos_integer()} |
+                        {entry, binary()}.
+
+-type idx_fold_fun() :: fun((read_idx_arg(), AccIn :: term()) ->
+                                   {ok, AccOut :: term()} | {stop, term()}).
+
+
 %%--------------------------------------------------------------------
 %% Public API
 %%--------------------------------------------------------------------
@@ -146,7 +154,7 @@ open(File, Opts) ->
     Size = case proplists:get_value(file_size, Opts) of
                SizeX when is_integer(SizeX), SizeX > 0 -> SizeX;
                undefined -> undefined
-             end,
+           end,
     Mode = proplists:get_value(mode, Opts, read),
     FileOpts = case Mode of
                    read ->
@@ -231,6 +239,32 @@ read(#mfile{offset=Offset, size=S, file=F, index=Idx}, Metric, Position, Count)
             file:pread(F, P, Count * ?DATA_SIZE)
     end.
 
+one_off_read(File, Metric, Position, Count) ->
+    IdxRes = fold_idx(fun({init, Offset, Size}, undefined)
+                            when Position >= Offset,
+                                 (Position - Offset) + Count =< Size->
+                              {ok, {Offset, Size, 0}};
+                         ({init, _Offset, _Size}, undefined) ->
+                              {stop, not_found};
+                         ({entry, AMetric}, Res) when AMetric =:= Metric ->
+                              {stop, {found, Res}};
+                         ({entry, _M}, {Offset, Size, N}) ->
+                              {ok, {Offset, Size, N + 1}}
+                      end, undefined, File),
+    case IdxRes of
+        {found, {Offset, Size, Pos}} ->
+            %% do read!
+            Base = Pos * Size * ?DATA_SIZE,
+            P = Base + ((Position - Offset) * ?DATA_SIZE),
+            {ok, F} = file:open(File ++ ".mstore", [read | ?OPTS]),
+            Res = file:pread(F, P, Count * ?DATA_SIZE),
+            file:close(F),
+            Res;
+        _ ->
+            {error, not_found}
+    end.
+
+
 %%--------------------------------------------------------------------
 %% @doc Fetches the bitmap for a metric
 %% @end
@@ -303,9 +337,9 @@ count(#mfile{index = BT}) ->
     btrie:size(BT);
 count(RootName) ->
     R = fold_idx(fun({init, _Offset, _Size}, Acc) ->
-                         Acc;
+                         {ok, Acc};
                     ({entry, _M}, Acc) ->
-                         Acc + 1
+                         {ok, Acc + 1}
                  end, 0, RootName),
     case R of
         {error, Reason} ->
@@ -320,7 +354,7 @@ count(RootName) ->
 %% Fold over each index element in given index file.
 %% @end
 %%--------------------------------------------------------------------
--spec fold_idx(function(), term(), string()) -> term().
+-spec fold_idx(idx_fold_fun(), term(), string()) -> term().
 
 fold_idx(Fun, Acc0, RootName) ->
     fold_idx(Fun, Acc0, 4*1024, RootName).
@@ -457,9 +491,9 @@ update_bitmap(M = #mfile{offset = Offset}, Pos, Position, Data) ->
 
 read_idx(BaseName) ->
     fold_idx(fun({init, Offset, Size}, undefined) ->
-                     {Offset, Size, btrie:new(), 0};
+                     {ok, {Offset, Size, btrie:new(), 0}};
                 ({entry, M}, {Offset, Size, T, I}) ->
-                     {Offset, Size, btrie:store(M, I, T), I+1}
+                     {ok, {Offset, Size, btrie:store(M, I, T), I+1}}
              end, undefined, BaseName).
 
 fold_idx(Fun, Acc0, Chunk, RootName) ->
@@ -468,8 +502,13 @@ fold_idx(Fun, Acc0, Chunk, RootName) ->
         {ok, IO} ->
             case file:read(IO, Chunk) of
                 {ok, <<Offset:64/?INT_TYPE, Size:64/?INT_TYPE, R/binary>>} ->
-                    Acc = Fun({init, Offset, Size}, Acc0),
-                    do_fold_idx(IO, Chunk, Fun, Acc, R);
+                    case Fun({init, Offset, Size}, Acc0) of
+                        {ok, Acc} ->
+                            do_fold_idx(IO, Chunk, Fun, Acc, R);
+                        {stop, Acc} ->
+                            file:close(IO),
+                            Acc
+                    end;
                 _ ->
                     file:close(IO),
                     {error, invalid_file}
@@ -479,8 +518,13 @@ fold_idx(Fun, Acc0, Chunk, RootName) ->
     end.
 
 do_fold_idx(IO, Chunk, Fun, AccIn, <<_L:16/integer, M:_L/binary, R/binary>>) ->
-    Acc = Fun({entry, M}, AccIn),
-    do_fold_idx(IO, Chunk, Fun, Acc, R);
+    case Fun({entry, M}, AccIn) of
+        {ok, Acc} ->
+            do_fold_idx(IO, Chunk, Fun, Acc, R);
+        {stop, Acc} ->
+            file:close(IO),
+            Acc
+    end;
 do_fold_idx(IO, Chunk, Fun, AccIn, R) ->
     case file:read(IO, Chunk) of
         {ok, Data} ->

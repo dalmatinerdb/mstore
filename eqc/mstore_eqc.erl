@@ -33,7 +33,8 @@ reopen(FileSize, Size, MaxFiles) ->
                store(FileSize, Size-1, MaxFiles),
                {oneof(
                   [{call, ?MODULE, do_reindex, [S]},
-                   {call, ?MODULE, renew, [S, FileSize, max_files(), ?DIR]},
+                   {call, ?MODULE, renew, [S, FileSize, max_files(), ?DIR,
+                                           new_opts()]},
                    {call, ?MODULE, do_reopen, [S, max_files(), ?DIR]}]), T})).
 
 delete(FileSize, Size, MaxFiles) ->
@@ -45,7 +46,7 @@ delete(FileSize, Size, MaxFiles) ->
 
 store(FileSize, Size, MaxFiles) ->
     ?LAZY(oneof(
-            [{{call, ?MODULE, new, [FileSize, MaxFiles, ?DIR]},
+            [{{call, ?MODULE, new, [FileSize, MaxFiles, ?DIR, new_opts()]},
               {call, gb_trees, empty, []}} || Size == 0]
             ++ [frequency(
                   [{9, insert(FileSize, Size, MaxFiles)},
@@ -72,14 +73,17 @@ do_reopen(Old, MaxFiles, Dir) ->
     {ok, MSet} = mstore:open(Dir, [{max_files, MaxFiles}]),
     MSet.
 
-renew(Old, FileSize, MaxFiles, Dir) ->
+renew(Old, FileSize, MaxFiles, Dir, Opts) ->
     ok = mstore:close(Old),
-    new(FileSize, MaxFiles, Dir).
+    new(FileSize, MaxFiles, Dir, Opts).
 
-new(FileSize, MaxFiles, Dir) ->
+new(FileSize, MaxFiles, Dir, Opts) ->
     {ok, MSet} = mstore:new(Dir, [{file_size, FileSize},
-                                  {max_files, MaxFiles}]),
+                                  {max_files, MaxFiles} | Opts]),
     MSet.
+
+new_opts() ->
+    oneof([[], [preload_index]]).
 
 offset() ->
     choose(0, 5000).
@@ -90,28 +94,34 @@ string() ->
 unlist(Vs) ->
     [E] = mmath_bin:to_list(Vs),
     E.
+read_opts() ->
+    oneof([
+           [],
+           [one_off]]).
 
 %%%-------------------------------------------------------------------
 %%% Properties
 %%%-------------------------------------------------------------------
 prop_read_write() ->
-    ?FORALL({Metric, Size, Time, Data},
-            {string(), size(), offset(), non_empty_int_list()},
+    ?FORALL({Metric, Size, Time, Data, Opts},
+            {string(), size(), offset(), non_empty_int_list(), read_opts()},
             begin
                 os:cmd("rm -r " ++ ?DIR),
                 {ok, S1} = mstore:new(?DIR, [{file_size, Size}]),
                 S2 = mstore:put(S1, Metric, Time, Data),
-                {ok, Res1} = mstore:get(S2, Metric, Time, length(Data)),
+                {ok, Res1} = mstore:get(S2, Metric, Time, length(Data), Opts),
                 Res2 = mmath_bin:to_list(Res1),
-                Metrics = btrie:fetch_keys(mstore:metrics(S2)),
-                mstore:delete(S2),
+                {Set, S3} = mstore:metrics(S2),
+                Metrics = btrie:fetch_keys(Set),
+                mstore:delete(S3),
                 Res2 == Data andalso
                     Metrics == [Metric]
             end).
 
 prop_read_len() ->
-    ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset},
-            {string(), size(), offset(), non_empty_int_list(), int(), int()},
+    ?FORALL({Metric, Size, Time, Data, TimeOffset, LengthOffset, Opts},
+            {string(), size(), offset(), non_empty_int_list(), int(), int(),
+             read_opts()},
             ?IMPLIES((Time + TimeOffset) > 0 andalso
                                                (length(Data) + LengthOffset) > 0,
                      begin
@@ -120,20 +130,19 @@ prop_read_len() ->
                          S2 = mstore:put(S1, Metric, Time, Data),
                          ReadL = length(Data) + LengthOffset,
                          ReadT = Time + TimeOffset,
-                         {ok, Read} = mstore:get(S2, Metric, ReadT, ReadL),
+                         {ok, Read} = mstore:get(S2, Metric, ReadT, ReadL, Opts),
                          mstore:delete(S2),
                          mmath_bin:length(Read) == ReadL
                      end)).
 
 prop_gb_comp() ->
-    ?FORALL({FileSize, MaxFiles}, {size(), max_files()},
+    ?FORALL({FileSize, MaxFiles, Opts}, {size(), max_files(), read_opts()},
             ?FORALL(D, store(FileSize, MaxFiles),
                     begin
                         os:cmd("rm -r " ++ ?DIR),
                         {S, T} = eval(D),
                         L = gb_trees:to_list(T),
-                        L1 = [{mstore:get(S, ?M, T1, 1), V} || {T1, V} <- L],
-                        mstore:delete(S),
+                        L1 = [{mstore:get(S, ?M, T1, 1, Opts), V} || {T1, V} <- L],
                         L2 = [{unlist(Vs), Vt} || {{ok, Vs}, Vt} <- L1],
                         L3 = [true || {_V, _V} <- L2],
                         Len = length(L),
