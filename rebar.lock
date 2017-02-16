@@ -1,12 +1,16 @@
 {"1.1.0",
 [{<<"bitmap">>,{pkg,<<"ebitmap">>,<<"0.1.4">>},0},
  {<<"cf">>,{pkg,<<"cf">>,<<"0.2.2">>},1},
+ {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
+ {<<"lager">>,{pkg,<<"lager">>,<<"3.2.4">>},0},
  {<<"mmath">>,{pkg,<<"mmath">>,<<"0.2.15">>},0},
  {<<"trie">>,{pkg,<<"trie">>,<<"1.6.0">>},0}]}.
 [
 {pkg_hash,[
  {<<"bitmap">>, <<"47CF4DC05D4B67E9BB6CDB52436A3C611A9FABE2B90D400BA0685C2471AA11A9">>},
  {<<"cf">>, <<"7F2913FFF90ABCABD0F489896CFEB0B0674F6C8DF6C10B17A83175448029896C">>},
+ {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
+ {<<"lager">>, <<"A6DEB74DAE7927F46BD13255268308EF03EB206EC784A94EAF7C1C0F3B811615">>},
  {<<"mmath">>, <<"3A0E6FF4C6C41D511BED481B0E61229BFBBCDBEFF196263DF918D349006081AE">>},
  {<<"trie">>, <<"8D2B0C850A01B46FC4711AA1862D45D6AE3A0DA963127E44E6535EA88274D7D3">>}]}
 ].
