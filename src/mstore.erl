@@ -127,13 +127,15 @@ new(Dir, Opts) when is_list(Dir) , is_list(Opts) ->
         E ->
             case file:make_dir(Dir) of
                 ok ->
-                    IdxFile = filename:join([Dir, "mstore"]),
-                    ok = file:write_file(IdxFile, index_header(MStore)),
-                    {ok, MStore#mstore{metrics=btrie:new()}};
-                E1 ->
-                    io:format("mstore creation errror: ~p -> ~p~n", [E, E1]),
-                    E
-            end
+                    ok;
+                {error, eexist} ->
+                    ok;
+                Error ->
+                    throw({error, {create_dir, E, Error}})
+            end,
+            IdxFile = filename:join([Dir, "mstore"]),
+            ok = file:write_file(IdxFile, index_header(MStore)),
+            {ok, MStore#mstore{metrics=btrie:new()}}
     end.
 
 %%--------------------------------------------------------------------
