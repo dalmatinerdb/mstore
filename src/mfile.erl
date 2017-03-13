@@ -630,7 +630,8 @@ write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
 
 set_bitmap(<<>>, _I, Acc, B) ->
     Acc1 = lists:reverse(Acc),
-    bitmap:set_many(Acc1, B);
+    {ok, R} = bitmap:set_many(Acc1, B),
+    R;
 
 set_bitmap(<<0, _:56, R/binary>>, I, Acc, B) ->
     set_bitmap(R, I + 1, Acc, B);
