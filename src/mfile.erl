@@ -623,7 +623,7 @@ write_bitmap_(F = #mfile{size = Size, bitmaps = BMPs, name = File}) ->
         Data ->
             Writes = [{P * BSize, Bin} || {<<P:32>>, Bin} <- Data],
             {ok, IO} = file:open(File ++ ".bitmap", [raw, binary, write]),
-            ok = file:pwrite(IO, lists:sort(Writes)),
+            ok = file:pwrite(IO, Writes),
             ok = file:close(IO),
             update_btime(F)
     end.
