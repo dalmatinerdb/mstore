@@ -10,6 +10,11 @@
 -export([prop_fold_fully/0,
          prop_count/0]).
 
+-export([new/2,
+         reopen/3,
+         reindex/1,
+         chash_size/0,
+         mset_serializer/1]).
 -define(S, mstore).
 -define(G, gb_trees).
 -define(M, "metric").
