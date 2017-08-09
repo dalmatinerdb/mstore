@@ -1,0 +1,17 @@
+language: erlang
+otp_release:
+  - 19.1
+  - 19.2
+  - 19.3
+  - 20.0
+
+sudo: false
+install: true
+script:
+  - ./ci.sh
+
+branches:
+  only:
+  - master
+  - dev
+  - test

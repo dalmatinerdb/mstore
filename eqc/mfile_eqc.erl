@@ -11,7 +11,11 @@
 
 -define(M, <<"metric">>).
 -define(DIR, ".qcdata").
--compile(export_all).
+-export([prop_bitmap/0]).
+
+-export([new/3,
+         write/3,
+         reopen/1]).
 
 new(FileSize, Offset, Dir) ->
     {ok, MF} = mfile:open(Dir ++ "/mfile", [{offset, Offset},

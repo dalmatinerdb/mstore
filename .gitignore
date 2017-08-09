@@ -10,3 +10,9 @@ deps
 .qcdata-copy
 _build
 .rebar3
+.test/
+TEST-*
+compile_commands.json
+doc/
+libs/
+rebar3.crashdump

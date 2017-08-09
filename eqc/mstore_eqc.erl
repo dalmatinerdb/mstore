@@ -8,7 +8,18 @@
                         non_empty_int_list/0, defined_int_array/0,
                         non_z_int/0]).
 
--compile(export_all).
+-export([prop_read_write/0,
+         prop_read_len/0,
+         prop_gb_comp/0,
+         prop_bitmap/0]).
+
+-export([do_delete/2,
+         do_delete_t/3,
+         do_reindex/1,
+         do_reopen/3,
+         renew/5,
+         new/4]).
+
 %%%-------------------------------------------------------------------
 %%% Generators
 %%%-------------------------------------------------------------------
