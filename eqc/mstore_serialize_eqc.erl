@@ -7,7 +7,8 @@
 -import(mstore_heler, [int_array/0, pos_int/0, non_neg_int/0,
                         non_empty_int_list/0, defined_int_array/0]).
 
--compile(export_all).
+-export([prop_fold_fully/0,
+         prop_count/0]).
 
 -define(S, mstore).
 -define(G, gb_trees).
