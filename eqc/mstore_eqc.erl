@@ -71,7 +71,7 @@ do_delete(Old, Offset) ->
 do_delete_t(Offset, FileSize, Tree) ->
     O1 = (Offset div FileSize) * FileSize,
     G = [{T, V} || {T, V} <- gb_trees:to_list(Tree),
-                   T > O1],
+                   T >= O1],
     G1 = lists:sort(G),
     gb_trees:from_orddict(G1).
 
