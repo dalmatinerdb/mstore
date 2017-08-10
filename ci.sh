@@ -7,4 +7,4 @@ cd ..
 export ERL_LIBS=./libs 
 ./rebar3 dialyzer
 ./rebar3 eunit
-./rebar3 as eqc eqc
+./rebar3 as eqc eqc -n 75 
