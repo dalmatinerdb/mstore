@@ -1,6 +1,4 @@
-## mstore
-
-[![Build Status](http://quickcheck-ci.com/p/licenser/mstore.png)](http://quickcheck-ci.com/p/licenser/mstore)
+## mstore [![Build Status](https://travis-ci.org/dalmatinerdb/mstore.svg?branch=master)](https://travis-ci.org/dalmatinerdb/mstore)
 
 MStore is a experimental metric store build in erlang, the primary functions are `open`, `new`, `get` and `put`.
 
