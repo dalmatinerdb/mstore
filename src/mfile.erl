@@ -336,7 +336,8 @@ count(RootName) ->
                  end, 0, RootName),
     case R of
         {error, Reason} ->
-            io:format("Could not read index file ~s.idx: ~p~n", [RootName, Reason]),
+            lager:error("Could not read index file ~s.idx: ~p~n",
+                        [RootName, Reason]),
             0;
         N when is_number(N) ->
             N
@@ -362,7 +363,7 @@ get_metrics(#mfile{index = M0}) ->
     [M || {M, _} <- M1].
 
 serialize_metric(MFile, Metric, Fun, infinity, Acc) ->
-    #mfile{offset=O,size=S} = MFile,
+    #mfile{offset=O, size=S} = MFile,
     Fun1 = fun(Offset, Data, AccIn) ->
                    Fun(Metric, Offset, Data, AccIn)
            end,
@@ -442,7 +443,7 @@ open_store(BaseName) ->
                     E
             end;
         E ->
-            io:format("Error opening file ~s.idx: ~p~n", [BaseName, E]),
+            lager:error("Error opening file ~s.idx: ~p~n", [BaseName, E]),
             E
     end.
 
@@ -608,10 +609,10 @@ write_bitmap(F = #mfile{otime = OTime, name = File, bitmaps = BMPs}) ->
         {_, OTimeA} when OTimeA =< OTime ->
             write_bitmap_(F);
         {_, Current} ->
-            io:format("Oh my the bitmap changed since we last "
-                      "read it! What shall we do?!?! For now we "
-                      "just write YOLO! (read: this is stupid)\n"
-                      "(Current) ~p > ~p (recorded)\n", [Current, OTime]),
+            lager:warning("Oh my the bitmap changed since we last "
+                          "read it! What shall we do?!?! For now we "
+                          "just write YOLO! (read: this is stupid)\n"
+                          "(Current) ~p > ~p (recorded)\n", [Current, OTime]),
             write_bitmap_(F)
     end.
 
@@ -658,8 +659,8 @@ read_bitmap(Pos, M = #mfile{size = Size,
                      %% we return it
                      {ok, <<Size:64/unsigned, _/binary>> = Bx} ->
                          Bx;
-                     %% If we can read but the size doesn't match (aka it's zero)
-                     %% this is an empty bitmap and we create a new one
+                     %% If we can read but the size doesn't match (aka it's
+                     %% zero) this is an empty bitmap and we create a new one
                      {ok, _} ->
                          {ok, Bx} = bitmap:new([{size, Size}]),
                          Bx;

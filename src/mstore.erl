@@ -241,7 +241,7 @@ delete(MStore = #mstore{size = S, dir = Dir, files = Files}, Before) ->
         binary(),
         non_neg_integer(),
         pos_integer(), [read_opt()]) ->
-                 {'error',atom()} |
+                 {'error', atom()} |
                  {ok, binary()}.
 
 get(#mstore{size=S, files=FS, dir=Dir},
@@ -260,7 +260,7 @@ get(#mstore{size=S, files=FS, dir=Dir},
         binary(),
         non_neg_integer(),
         pos_integer()) ->
-                 {'error',atom()} |
+                 {'error', atom()} |
                  {ok, binary()}.
 
 get(MStore, Metric, Time, Count)  ->
@@ -276,7 +276,7 @@ get(MStore, Metric, Time, Count)  ->
         mstore(),
         binary(),
         non_neg_integer()) ->
-                    {'error',atom()} |
+                    {'error', atom()} |
                     {ok, bitmap:bitmap()}.
 
 bitmap(#mstore{size=S, files=FS, dir=Dir},
@@ -633,7 +633,7 @@ do_get(S, [{FileBase, F} | _] = FS,
                            Acc1
                    end,
             do_get(S, FS, Dir, Metric, R, Acc2, Opts);
-        {error,not_found} ->
+        {error, not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
@@ -658,7 +658,7 @@ do_get(S,
                            Acc1
                    end,
             do_get(S, FS, Dir, Metric, R, Acc2, Opts);
-        {error,not_found} ->
+        {error, not_found} ->
             Acc1 = <<Acc/binary, (mmath_bin:empty(Count))/binary>>,
             do_get(S, FS, Dir, Metric, R, Acc1, Opts);
         eof ->
